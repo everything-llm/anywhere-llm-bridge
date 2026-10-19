@@ -28,12 +28,11 @@ export function readEnv(file: string): Record<string, string> {
 }
 
 /** Set (or, with null, drop) settings in the file, keeping its others and its comments. A new file
- *  starts with `header` (the bridge's own settings header by default). The file is the user's alone
- *  (mode 600). */
-export function saveEnv(file: string, changes: Record<string, string | null>, header: string[] = HEADER): void {
+ *  starts with the settings' header. The file is the user's alone (mode 600). */
+export function saveEnv(file: string, changes: Record<string, string | null>): void {
   const left = new Map(Object.entries(changes));
   const kept: string[] = [];
-  const existing = fs.existsSync(file) ? fs.readFileSync(file, "utf8").split(/\r?\n/) : [...header];
+  const existing = fs.existsSync(file) ? fs.readFileSync(file, "utf8").split(/\r?\n/) : [...HEADER];
   if (existing.at(-1) === "") existing.pop();
   for (const line of existing) {
     const key = line.split("=", 1)[0].trim();

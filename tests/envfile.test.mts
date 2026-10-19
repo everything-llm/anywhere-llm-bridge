@@ -21,8 +21,6 @@ test("a new file gets the header and mode 600, in a folder made for it", () => {
   assert.match(lines[0], /^# anywherellm-bridge's settings/);
   assert.equal(lines.at(-2), "A=1");
   if (process.platform !== "win32") assert.equal(fs.statSync(file).mode & 0o777, 0o600); // Windows has no modes
-  saveEnv(path.join(tmp, "own.env"), { A: "1" }, ["# mine"]);
-  assert.equal(fs.readFileSync(path.join(tmp, "own.env"), "utf8"), "# mine\nA=1\n");
 });
 
 test("it sets, adds and drops, keeping the others and the comments", () => {
