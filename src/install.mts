@@ -139,16 +139,14 @@ export async function health(ctx: Ctx): Promise<boolean> {
     found.push([manager.label, state === "active", state]);
   }
   const probe = (what: string, status: number, detail = ""): Check => [what, status === 200, `${detail}${status || "no answer"}`];
-  const publicUrl = `${settings.publicUrl}/health`;
   const [bridge, ping, login, route] = await Promise.all([
     statusOf(`http://127.0.0.1:${settings.port}/health`),
     statusOf(`${settings.anythingllmUrl}/api/ping`),
     loginCheck(settings),
-    settings.publicUrl ? statusOf(publicUrl).then((status) => probe(publicUrl, status)) : (["route", true, "PUBLIC_URL and PUBLIC_HOST unset: the bridge answers on this machine only"] as Check),
+    settings.publicUrl ? statusOf(`${settings.publicUrl}/health`).then((status) => probe(`${settings.publicUrl}/health`, status)) : (["route", true, "PUBLIC_URL and PUBLIC_HOST unset: the bridge answers on this machine only"] as Check),
   ]);
   found.push(probe(`bridge on :${settings.port}`, bridge), probe("AnythingLLM", ping, `${settings.anythingllmUrl}: `), login);
-  const allowed = shown(settings).BRIDGE_ALLOW;
-  found.push(["BRIDGE_ALLOW", Boolean(allowed), allowed || "empty: the bridge passes nothing"], route);
+  found.push(["BRIDGE_ALLOW", settings.allow.length > 0, shown(settings).BRIDGE_ALLOW || "empty: the bridge passes nothing"], route);
   for (const [what, ok, detail] of found) ctx.print(`${ok ? "ok  " : "FAIL"} ${what}${detail ? `: ${detail}` : ""}`);
   return found.every(([, ok]) => ok);
 }

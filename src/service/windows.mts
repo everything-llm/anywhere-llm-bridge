@@ -8,7 +8,7 @@ import path from "node:path";
 import { writeAtomicIfChanged } from "../atomic.mts";
 import type { Definition, Host, Manager } from "./index.mts";
 
-export const TASK = "anywherellm-bridge";
+const TASK = "anywherellm-bridge";
 /** SCHED_S_TASK_RUNNING (0x41301): the last result of a task that is running, in any display language. */
 const RUNNING = "267009";
 

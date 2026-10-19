@@ -48,13 +48,13 @@ interface Key {
   secret?: string;
 }
 
-/** The secret of the developer key called `name`, made when there is none. Every phone shares
+/** The secret of the developer key called KEY_NAME, made when there is none. Every phone shares
  *  KEY_NAME's, so deleting it in AnythingLLM's settings disconnects them all. */
-export async function developerKey(api: Upstream, name: string = KEY_NAME): Promise<string> {
+export async function developerKey(api: Upstream): Promise<string> {
   const listed = (expect(await api.exchange("GET", "/system/api-keys")) as { apiKeys?: Key[] } | null)?.apiKeys ?? [];
-  const found = listed.find((k) => k?.name === name && k.secret)?.secret;
+  const found = listed.find((k) => k?.name === KEY_NAME && k.secret)?.secret;
   if (found) return found;
-  const made = expect(await api.exchange("POST", "/system/generate-api-key", { name })) as { apiKey?: Key; error?: string } | null;
+  const made = expect(await api.exchange("POST", "/system/generate-api-key", { name: KEY_NAME })) as { apiKey?: Key; error?: string } | null;
   if (!made?.apiKey?.secret) throw upstreamError(`AnythingLLM made no key${made?.error ? `: ${made.error}` : ""}`);
   return made.apiKey.secret;
 }

@@ -6,7 +6,7 @@
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-engine=$(command -v podman || command -v docker) || { echo "tools/routes: needs podman or docker" >&2; exit 2; }
+need_engine
 
 # Runs in the image, whose Node is old: a line "VERSION x.y.z", then "METHOD /path" for each route.
 scan=$(cat <<'JS'

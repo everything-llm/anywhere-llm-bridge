@@ -9,7 +9,7 @@ import path from "node:path";
 import { writeAtomicIfChanged } from "../atomic.mts";
 import type { Definition, Host, Manager } from "./index.mts";
 
-export const LABEL = "local.anywherellm-bridge";
+const LABEL = "local.anywherellm-bridge";
 
 const xml = (text: string): string => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const string = (text: string): string => `<string>${xml(text)}</string>`;
