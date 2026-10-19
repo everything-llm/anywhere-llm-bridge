@@ -1,0 +1,18 @@
+{
+  "name": "anywherellm-bridge",
+  "private": true,
+  "description": "The bridge AnywhereLLM Lite calls: AnythingLLM's internal API behind a developer key and a route allowlist. Ships as one file, dist/anywherellm-bridge.cjs, with no dependencies.",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc -p .",
+    "test": "node build.mjs && node --test --test-timeout=120000 \"tests/*.test.mts\""
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  }
+}
