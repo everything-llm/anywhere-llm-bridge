@@ -73,7 +73,7 @@ function send(res: http.ServerResponse, status: number, json: unknown): void {
 }
 
 /** Whether `path` is one of the bridge's own routes rather than AnythingLLM's. */
-const isOwn = (path: string): boolean => path === "/allowed" || path.startsWith("/allowed/") || path === "/asks" || path.startsWith("/asks/");
+const isOwn = (path: string): boolean => path === "/allowed" || path === "/asks" || path.startsWith("/asks/");
 
 /** The `origin` parameter of a query, or a 400. */
 function originIn(query: string): string {

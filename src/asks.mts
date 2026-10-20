@@ -45,16 +45,17 @@ export function checkId(id: string): string {
   return id;
 }
 
-/** `raw` as an origin (`URL.origin`: lower-case host, no default port) when it is an http or https
- *  address with nothing but a scheme, host and port, else a 400. */
+/** `raw` when it is an origin as `URL.origin` writes it: an http or https scheme, a lower-case host
+ *  and a port only when it isn't the default; else a 400. The same rule as anywherellm-suite's fence
+ *  (`originOf`, packages/shared/fence.mts), which writes what the skills ask for. */
 export function checkOrigin(raw: string): string {
+  const s = raw.trim();
   let url: URL | null = null;
   try {
-    url = new URL(raw.trim());
+    url = new URL(s);
   } catch {}
-  const bare = url && (url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password && url.pathname === "/" && !url.search && !url.hash && !/[/?#]$/.test(raw.trim());
-  if (!url || !bare) throw invalid(`${JSON.stringify(raw.slice(0, 100))} isn't an address: an http or https scheme, a host and a port, nothing else`);
-  return url.origin;
+  if (!url || !/^https?:$/.test(url.protocol) || url.origin !== s) throw invalid(`${JSON.stringify(raw.slice(0, 100))} isn't an address: an http or https scheme, a host and a port, nothing else`);
+  return s;
 }
 
 /** `decision` when it is one, else a 400. */
@@ -70,13 +71,6 @@ function gone(): never {
 
 type AllowedFile = { origins: Allowed[] };
 const noOrigins = (): AllowedFile => ({ origins: [] });
-
-/** The allowed list of `value`, made one when it has none: an allowed.json an earlier edition
- *  wrote by host (`{hosts}`) allows nothing. */
-function listed(value: Partial<AllowedFile>): Allowed[] {
-  if (!Array.isArray(value.origins)) value.origins = [];
-  return value.origins;
-}
 
 export class Asks {
   readonly #dir: string;
@@ -105,22 +99,23 @@ export class Asks {
       if (found.decision) throw conflict(`this ask was answered already: ${found.decision}`);
       const now = this.#now();
       if (!(Date.parse(found.expires) > now.getTime())) throw conflict("this ask expired; the skill went on without it");
+      if (decision === "always") checkOrigin(found.origin);
       found.decision = decision;
       found.decided = now.toISOString();
       return found;
     });
-    if (decision === "always") await this.#allow(checkOrigin(ask.origin));
+    if (decision === "always") await this.#allow(ask.origin);
     return ask;
   }
 
   /** The addresses always allowed. */
   allowed(): Allowed[] {
-    return listed(readJson(this.#allowedFile, noOrigins));
+    return readJson(this.#allowedFile, noOrigins).origins ?? [];
   }
 
   async #allow(origin: string): Promise<void> {
     await updateJson(this.#allowedFile, noOrigins, (value) => {
-      const origins = listed(value);
+      const origins = (value.origins ??= []);
       if (!origins.some((o) => o.origin === origin)) origins.push({ origin, added: this.#now().toISOString() });
     });
   }
@@ -129,7 +124,7 @@ export class Asks {
   forget(raw: string): Promise<Allowed[]> {
     const origin = checkOrigin(raw);
     return updateJson(this.#allowedFile, noOrigins, (value) => {
-      const origins = listed(value);
+      const origins = (value.origins ??= []);
       const left = origins.filter((o) => o.origin !== origin);
       if (left.length === origins.length) throw notFound(`${origin} isn't always allowed`);
       value.origins = left;

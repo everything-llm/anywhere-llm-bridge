@@ -104,7 +104,7 @@ test("Always allow adds the origin once, and the list is read and taken from", a
   writeAsk();
   assert.equal((await call("POST", `/asks/${ID}`, { decision: "always" })).status, 200);
   const other = "f".repeat(32);
-  writeAsk({ id: other, host: "MUSE-VM", origin: "HTTP://MUSE-VM:8463" });
+  writeAsk({ id: other });
   assert.equal((await call("POST", `/asks/${other}`, { decision: "always" })).status, 200);
   const third = "e".repeat(32);
   writeAsk({ id: third, origin: "http://muse-vm:8080" });
@@ -117,19 +117,18 @@ test("Always allow adds the origin once, and the list is read and taken from", a
     ],
   });
   assert.equal(fs.statSync(allowedFile()).mode & 0o777, 0o600);
-  const gone = await call("DELETE", `/allowed?origin=${encodeURIComponent("HTTP://Muse-VM:8463")}`);
+  const gone = await call("DELETE", `/allowed?origin=${encodeURIComponent("http://muse-vm:8463")}`);
   assert.deepEqual([gone.status, gone.json], [200, { origins: [{ origin: "http://muse-vm:8080", added }] }]);
   const again = await call("DELETE", `/allowed?origin=${encodeURIComponent("http://muse-vm:8463")}`);
   assert.equal(again.status, 404);
   assert.match(again.json.error, /isn't always allowed/);
 });
 
-test("an allowed.json written by host allows nothing, and is written again by origin", async () => {
-  fs.writeFileSync(allowedFile(), JSON.stringify({ hosts: [{ host: "muse-vm", added: NOW.toISOString() }] }));
-  assert.deepEqual((await call("GET", "/allowed")).json, { origins: [] });
-  writeAsk();
-  assert.equal((await call("POST", `/asks/${ID}`, { decision: "always" })).status, 200);
-  assert.deepEqual(JSON.parse(fs.readFileSync(allowedFile(), "utf8")).origins, [{ origin: "http://muse-vm:8463", added: NOW.toISOString() }]);
+test("Always allow refuses an ask whose origin isn't one, and writes no decision", async () => {
+  writeAsk({ origin: "HTTP://MUSE-VM:8463/x" });
+  assert.equal((await call("POST", `/asks/${ID}`, { decision: "always" })).status, 400);
+  assert.equal(readAsk().decision, null);
+  assert.equal(fs.existsSync(allowedFile()), false);
 });
 
 test("an ask answered already or expired is a 409, and one that's gone a 404", async () => {
@@ -155,9 +154,8 @@ test("a bad id, address, decision or method is refused before any file is touche
   }
   assert.equal((await call("POST", `/asks/${ID}`, { decision: "maybe" })).status, 400);
   assert.equal((await call("POST", `/asks/${ID}`)).status, 400);
-  // An encoded `/` is a separator, as on the routes passed on: these have a segment too many.
+  // An encoded `/` is a separator, as on the routes passed on: this has a segment too many.
   assert.equal((await call("GET", "/asks/..%2Fallowed")).status, 404);
-  assert.equal((await call("DELETE", "/allowed/a%2Fb")).status, 404);
   assert.equal((await call("DELETE", "/allowed")).status, 400);
   assert.equal((await call("DELETE", `/allowed?origin=${encodeURIComponent("http://muse-vm:8463/x")}`)).status, 400);
   assert.equal((await call("DELETE", `/asks/${ID}`)).status, 405);
@@ -199,10 +197,11 @@ test("a decision waits for the skill's lock on the ask", async () => {
 });
 
 test("an origin is a scheme, a host and a port, and nothing else", () => {
-  assert.equal(checkOrigin(" HTTPS://Muse-VM.tail1234.ts.net:443 "), "https://muse-vm.tail1234.ts.net");
+  assert.equal(checkOrigin(" https://muse-vm.tail1234.ts.net "), "https://muse-vm.tail1234.ts.net");
   assert.equal(checkOrigin("http://100.64.0.7:8463"), "http://100.64.0.7:8463");
-  assert.equal(checkOrigin("http://[fd7a:115c:a1e0::1]:80"), "http://[fd7a:115c:a1e0::1]");
-  for (const bad of ["", "muse-vm", "muse-vm:8463", "ftp://muse-vm", "http://muse-vm/", "http://muse-vm/x", "http://muse-vm?a", "http://muse-vm#a", "http://u:p@muse-vm"]) {
+  assert.equal(checkOrigin("http://[fd7a:115c:a1e0::1]"), "http://[fd7a:115c:a1e0::1]");
+  // Only as URL.origin writes it: the fence writes what the skills ask for that way.
+  for (const bad of ["", "muse-vm", "muse-vm:8463", "ftp://muse-vm", "HTTPS://Muse-VM", "https://muse-vm:443", "http://muse-vm/", "http://muse-vm/x", "http://muse-vm?a", "http://muse-vm#a", "http://u:p@muse-vm"]) {
     assert.throws(() => checkOrigin(bad), JSON.stringify(bad));
   }
 });
