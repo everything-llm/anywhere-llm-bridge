@@ -33,7 +33,7 @@ test("serve passes a listed route for a good key and refuses the rest", async ()
       child.on("exit", (code) => reject(new Error(`exited ${code}`)));
     });
     const url = `http://127.0.0.1:${port}`;
-    assert.deepEqual(await (await fetch(`${url}/health`)).json(), { ok: true, service: "anywherellm-bridge", allow: ["GET /scheduled-jobs"] });
+    assert.deepEqual(await (await fetch(`${url}/health`)).json(), { ok: true, service: "anywherellm-bridge", allow: ["GET /scheduled-jobs"], asks: false });
     const key = { Authorization: "Bearer good-key" };
     assert.deepEqual(await (await fetch(`${url}/scheduled-jobs`, { headers: key })).json(), { ok: true });
     assert.equal((await fetch(`${url}/system/api-keys`, { headers: key })).status, 403);

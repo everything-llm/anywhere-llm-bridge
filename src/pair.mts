@@ -8,7 +8,8 @@ import { invalid, upstream as upstreamError } from "./errors.mts";
 import { privateAddress, privateName } from "./private.mts";
 import { expect, type Upstream } from "./upstream.mts";
 
-const KEY_NAME = "AnywhereLLM";
+/** The developer key the phones share, the one `pair` hands out; only it may decide asks. */
+export const KEY_NAME = "AnywhereLLM";
 
 /** True for a name of this machine or its network (localhost, a name with no dot such as `nas`, or
  *  one under .local, .lan, .internal, .home.arpa or .ts.net) and an address outside the public

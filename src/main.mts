@@ -5,7 +5,9 @@
 
 import fs from "node:fs";
 import os from "node:os";
+import path from "node:path";
 import { parseArgs, type ParseArgsConfig } from "node:util";
+import { Asks } from "./asks.mts";
 import { invalid } from "./errors.mts";
 import { Upstream } from "./upstream.mts";
 import defaultAllow from "../default-allow.txt";
@@ -52,7 +54,8 @@ async function main(argv: string[]): Promise<number | void> {
   switch (command) {
     case "serve": {
       const settings = loadSettings(ctx);
-      const server = createServer({ rules: settings.allow, upstream: Upstream.of(settings), log: console.error });
+      const asks = settings.storage ? new Asks(path.join(settings.storage, "fence-lean")) : null;
+      const server = createServer({ rules: settings.allow, upstream: Upstream.of(settings), asks, log: console.error });
       server.on("error", (e) => {
         console.error(`anywherellm-bridge: ${e.message}`);
         process.exit(1);

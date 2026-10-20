@@ -76,6 +76,7 @@ A chat is a thread. The slug in the path is the workspace's, and `<thread>` is t
 
 - `GET /system/api-keys` returns `{"apiKeys": [{id, name, secret, ...}]}`.
 - `POST /system/generate-api-key {"name"}` returns `{"apiKey": {name, secret, ...}, "error"}`.
+- The bridge reads the list itself, through its own login, to tell the key named `AnywhereLLM` from the others: only that key answers the fence's asks. A client is never passed this route unless `BRIDGE_ALLOW` lists it.
 
 ## Models
 

@@ -2,7 +2,7 @@
 
 A bridge to the parts of AnythingLLM that only its own settings pages reach: its **internal API** (`/api`), which the developer API (`/api/v1`) leaves out. A client such as AnywhereLLM Lite calls the bridge with only a developer key; the bridge logs in to the internal API with AnythingLLM's password and passes on the routes you list.
 
-It needs nothing from AnythingLLM beyond a stock instance, adds no skill and keeps no state. What each route does is AnythingLLM's own, so the caller knows the routes; [docs/endpoints.md](docs/endpoints.md) records the ones worth opening, with their shapes as AnythingLLM 1.16.2 gives them.
+It needs nothing from AnythingLLM beyond a stock instance and adds no skill. Its only files are the fence's asks, which it shares with the suite's skills in AnythingLLM's storage (below). What each route does is AnythingLLM's own, so the caller knows the routes; [docs/endpoints.md](docs/endpoints.md) records the ones worth opening, with their shapes as AnythingLLM 1.16.2 gives them.
 
 It is one file, `dist/anywherellm-bridge.cjs`, that runs on Node 20.3 or later and needs nothing installed beside it. Only the phone app needs it. It moved here from [anywherellm-suite](https://github.com/BinaryBand/anywherellm-suite) (the control server and agent skills), whose installer no longer sets it up.
 
@@ -20,13 +20,24 @@ flowchart LR
 
 It listens on `BRIDGE_PORT` (8467), on 127.0.0.1.
 
-- `GET /health` needs no key: `{"ok": true, "service": "anywherellm-bridge", "allow": [...]}`.
+- `GET /health` needs no key: `{"ok": true, "service": "anywherellm-bridge", "allow": [...], "asks": true}`. `asks` is false when the bridge doesn't know AnythingLLM's storage.
 - Any other request needs `Authorization: Bearer <developer key>`, which AnythingLLM must accept. Any origin may call it, and a preflight needs no key.
 - `<METHOD> /<path>` (GET, POST, PUT or DELETE) is AnythingLLM's `/api/<path>`, with the query string and the JSON body sent on. AnythingLLM's status and JSON come back as they are: a 400 with `{"job": null, "error": ...}` stays that.
 - A route is passed only when `BRIDGE_ALLOW` lists it. Any other is `403`. With the setting empty, nothing passes.
 - The bridge's own failures are `{"error": "..."}`: 400 a bad request (a path with `.`, `..` or an empty segment, a body that isn't JSON), 401 no accepted key, 403 a route not allowed, 405 another method, 413 a body over 8 MiB, 502 AnythingLLM can't be reached or refused the bridge's login.
 - A client that disconnects before the answer ends the call to AnythingLLM too (Node 20.3 or later for `AbortSignal.any`); a POST may already have taken effect there.
 - Replies are JSON. A route that sends a file or a stream isn't for the bridge.
+
+**The fence's asks.** The suite's skills refuse any host on your own network that `FENCE_ALLOW` doesn't name. During a chat a phone streams, a skill asks instead: it writes the ask to `<storage>/fence-lean/asks/<id>.json`, says `[ask:<id>]` in its status line, and waits up to 120 s for a decision. The bridge is how the phone reads and answers it. These routes are the bridge's own, not AnythingLLM's, and are there only when `ANYTHINGLLM_STORAGE` is set:
+
+| Route | Answer |
+| --- | --- |
+| `GET /asks/<id>` | `{"ask": {id, host, origin, skill, workspace, why, asked, expires, decision, decided}}`; 404 once the skill stopped waiting |
+| `POST /asks/<id>` `{"decision": "once" \| "always" \| "deny"}` | `{"ask"}` with `decision` and `decided` set; 409 when it was answered or expired. `always` adds its host to `<storage>/fence-lean/allowed.json`, which every skill reads beside `FENCE_ALLOW` |
+| `GET /allowed` | `{"hosts": [{host, added}]}`, the hosts always allowed |
+| `DELETE /allowed/<host>` | `{"hosts"}` left; 404 when it isn't one |
+
+They take only the developer key named `AnywhereLLM`, the one `pair` hands out, which the bridge looks up in AnythingLLM's key list (cached as the key check is). Any other key AnythingLLM accepts gets 403, so a key the agent holds can't answer its own ask. An id is 32 hex digits and a host a bare name or address; anything else is a 400. The bridge writes under the same lock folders as the suite's `updateJson` (`<file>.lock`), so the two never write over each other.
 
 **Why a list.** The bridge holds AnythingLLM's password, so anyone with a developer key could do what the settings pages do, down to reading the key list or rewriting `.env` through `system/update-env`, unless the bridge says no. List what a client needs and no more.
 
@@ -60,19 +71,25 @@ The settings file is `bridge.env` in the user's settings folder (`~/.config/anyw
 ## Deploy it
 
 1. Build it: `npm install` once, then `npm run build`. Copy `dist/anywherellm-bridge.cjs` where you want it to live, or leave it there; the service points at that path.
+
 1. Run `node anywherellm-bridge.cjs install` (with `--storage <AnythingLLM's storage folder>` unless it is AnythingLLM Desktop's, or the one install was given before). It points the bridge at the storage, where the password is, sets `BRIDGE_ALLOW` when it isn't set, and starts the bridge under the user's service manager, where one answers:
 
-   | OS | Service | Its log |
-   | --- | --- | --- |
-   | Linux | the systemd user unit `anywherellm-bridge.service` in `~/.config/systemd/user` | `journalctl --user -u anywherellm-bridge` |
-   | macOS | the launchd agent `local.anywherellm-bridge` in `~/Library/LaunchAgents`, in the GUI session | `~/Library/Logs/anywherellm-bridge.log` |
-   | Windows | the Task Scheduler task `anywherellm-bridge`, at logon, running `%LOCALAPPDATA%\anywherellm-bridge\serve.cmd` with no window | `bridge.log` beside it |
+| OS | Service | Its log |
+| --- | --- | --- |
+| Linux | the systemd user unit `anywherellm-bridge.service` in `~/.config/systemd/user` | `journalctl --user -u anywherellm-bridge` |
+| macOS | the launchd agent `local.anywherellm-bridge` in `~/Library/LaunchAgents`, in the GUI session | `~/Library/Logs/anywherellm-bridge.log` |
+| Windows | the Task Scheduler task `anywherellm-bridge`, at logon, running `%LOCALAPPDATA%\anywherellm-bridge\serve.cmd` with no window | `bridge.log` beside it |
 
    `--service systemd|launchd|windows|foreground|auto` picks one (saved as `BRIDGE_SERVICE`); `--no-start` stops before starting it. launchd and the Task Scheduler have only run against scripted commands so far, not on a real Mac or PC.
+
 1. With no service manager (no user systemd, an ssh session without a GUI login, `--service foreground`), run `node anywherellm-bridge.cjs serve` under your own supervisor: a terminal, tmux, a container or a process manager. It reads the same settings file.
+
 1. If AnythingLLM's `.env` isn't at `<storage>/.env`, set `ANYTHINGLLM_ENV` in the settings file. AnythingLLM Desktop has no password, so it needs none.
+
 1. To pass other routes, change `BRIDGE_ALLOW` in the settings file and run `install` again (it restarts the service).
+
 1. Run `node anywherellm-bridge.cjs health`. It checks the service, the bridge, AnythingLLM, the bridge's login, that `BRIDGE_ALLOW` isn't empty, and the public route.
+
 1. To connect a phone, give AnythingLLM and the bridge addresses your devices reach (next section), then run `node anywherellm-bridge.cjs pair`. It prints a link, `anywherellm://connect?...`, that AnywhereLLM Lite opens. The link holds `url` (AnythingLLM's address), `key` (the developer key named `AnywhereLLM`, made the first time), and `toolkit` and `apps` (the bridge's and anythingllm-apps-v2's addresses, when known; the app still reads the first as `toolkit`). There is no QR code; any QR generator can draw the link. Each address must be https, or plain http to a private host.
 
 `uninstall` stops the service and keeps the settings file. `settings` prints the settings in use.
@@ -97,7 +114,7 @@ On Linux these need sudo unless you ran `tailscale set --operator=$USER` once.
 ## Develop
 
 - `npm run typecheck` and `npm test` (which builds first) are the gate: `lefthook.yml` runs them before a push, and `.github/workflows/test.yml` on Linux, macOS and Windows. `tools/e2e` starts a throwaway AnythingLLM in a container (podman or docker), installs and serves the bridge against it and runs `tools/e2e.test.mts`; `tools/e2e command...` runs that command in place of the tests, with the addresses and key in `E2E_*`, so a client such as AnywhereLLM Lite runs its own e2e against a real bridge. `tools/routes` reads the pinned image (`versions.env`) and fails for any rule in `default-allow.txt` AnythingLLM no longer declares; `--stamp` records the version.
-- `src/` is flat: `allow.mts` (the rules) and `settings.mts` do no I/O; `upstream.mts` is AnythingLLM's client; `server.mts` the HTTP side; `install.mts`, `service/`, `pair.mts` and `envfile.mts` the deployment; `main.mts` the commands. `upstream.mts`, `envfile.mts`, `paths.mts`, `atomic.mts` and the rules in `private.mts` are copies of the suite's `packages/shared` helpers, which the suite's control server still uses; the two copies don't track each other.
+- `src/` is flat: `allow.mts` (the rules) and `settings.mts` do no I/O; `upstream.mts` is AnythingLLM's client; `server.mts` the HTTP side; `asks.mts` the fence's asks; `install.mts`, `service/`, `pair.mts` and `envfile.mts` the deployment; `main.mts` the commands. `upstream.mts`, `envfile.mts`, `paths.mts`, `atomic.mts` (its lock and JSON helpers too) and the rules in `private.mts` are copies of the suite's `packages/shared` helpers, which the suite's control server still uses; the two copies don't track each other.
 - [docs/notes.md](docs/notes.md) has the decisions and their reasons.
 - Tests import `src/` directly (Node strips the types), except `bundle.test.mts`, which runs the built file. `tests/fakes/anythingllm.mts` stands in for AnythingLLM's two APIs on a port of its own, so `server.test.mts` runs the real bridge against it, with and without AnythingLLM's password.
 - `service.test.mts` runs `install`, `uninstall` and `health` against a scripted `systemctl` and a real bridge on a free port. A client that leaves ends the upstream call (`server.test.mts`, with a route the fake AnythingLLM never answers).

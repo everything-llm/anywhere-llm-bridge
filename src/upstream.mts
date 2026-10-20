@@ -1,6 +1,6 @@
 // AnythingLLM, from here: its internal API (`<ANYTHINGLLM_URL>/api`), the one its own pages use,
-// for what the developer API (/api/v1) doesn't have; and the developer API only to ask whether a
-// client's key is good.
+// for what the developer API (/api/v1) doesn't have, and to ask which key a client sent; and the
+// developer API only to ask whether a client's key is good.
 //
 // It logs in as the pages do: `POST /api/request-token` with the password, which is AUTH_TOKEN: in
 // AnythingLLM's .env for the bridge (ANYTHINGLLM_ENV), in the environment for a process AnythingLLM
@@ -94,6 +94,7 @@ export class Upstream {
   readonly #now: () => number;
   #token: Promise<string> | null = null;
   #seen = new Map<string, Held>();
+  #named = new Map<string, Held>();
 
   /** `password` is null for none. */
   constructor(baseUrl: string, password: Password | null, now: () => number = () => performance.now()) {
@@ -147,28 +148,46 @@ export class Upstream {
   /** Whether AnythingLLM takes a developer key (`GET /api/v1/auth`), remembered OK_FOR ms when it
    *  does and BAD_FOR when it doesn't. Calls made at once with one key share one question. */
   keyValid(key: string): Promise<boolean> {
-    if (!key) return Promise.resolve(false);
-    const digest = crypto.createHash("sha256").update(key).digest("hex");
-    const held = this.#seen.get(digest);
-    if (held && held.until > this.#now()) return held.ok;
-    if (this.#seen.size >= MAX_KEYS) this.#forget();
-    const entry: Held = { ok: Promise.resolve(false), until: Infinity };
-    entry.ok = request(`${this.#base}/api/v1/auth`, { token: key, timeout: KEY_TIMEOUT }).then(({ status }) => {
+    return this.#remember(this.#seen, key, async () => {
+      const { status } = await request(`${this.#base}/api/v1/auth`, { token: key, timeout: KEY_TIMEOUT });
       if (status >= 500) throw upstreamError(`AnythingLLM answered ${status} when asked about a key`);
-      entry.until = this.#now() + (status === 200 ? OK_FOR : BAD_FOR);
       return status === 200;
     });
-    entry.ok.catch(() => {
-      if (this.#seen.get(digest) === entry) this.#seen.delete(digest); // an unanswered question is asked again
+  }
+
+  /** Whether `key` is the developer key called `name` in AnythingLLM's key list (internal
+   *  `GET /api/system/api-keys`, through the bridge's login), remembered as `keyValid` is. */
+  keyNamed(key: string, name: string): Promise<boolean> {
+    return this.#remember(this.#named, `${name}\n${key}`, async () => {
+      const listed = (expect(await this.exchange("GET", "/system/api-keys", undefined, KEY_TIMEOUT)) as { apiKeys?: { name?: unknown; secret?: unknown }[] } | null)?.apiKeys;
+      return Array.isArray(listed) && listed.some((k) => k?.name === name && k.secret === key);
     });
-    this.#seen.set(digest, entry);
+  }
+
+  /** `ask`'s answer about `key`, kept in `seen` by its digest: OK_FOR ms when true, BAD_FOR when
+   *  false, not at all when it failed. Calls made at once share one question. */
+  #remember(seen: Map<string, Held>, key: string, ask: () => Promise<boolean>): Promise<boolean> {
+    if (!key) return Promise.resolve(false);
+    const digest = crypto.createHash("sha256").update(key).digest("hex");
+    const held = seen.get(digest);
+    if (held && held.until > this.#now()) return held.ok;
+    if (seen.size >= MAX_KEYS) this.#forget(seen);
+    const entry: Held = { ok: Promise.resolve(false), until: Infinity };
+    entry.ok = ask().then((ok) => {
+      entry.until = this.#now() + (ok ? OK_FOR : BAD_FOR);
+      return ok;
+    });
+    entry.ok.catch(() => {
+      if (seen.get(digest) === entry) seen.delete(digest); // an unanswered question is asked again
+    });
+    seen.set(digest, entry);
     return entry.ok;
   }
 
   /** Makes room: drops what has expired, and if that is nothing, the oldest. */
-  #forget(): void {
+  #forget(seen: Map<string, Held>): void {
     const now = this.#now();
-    for (const [k, v] of this.#seen) if (v.until <= now) this.#seen.delete(k);
-    if (this.#seen.size >= MAX_KEYS) this.#seen.delete(this.#seen.keys().next().value as string);
+    for (const [k, v] of seen) if (v.until <= now) seen.delete(k);
+    if (seen.size >= MAX_KEYS) seen.delete(seen.keys().next().value as string);
   }
 }
