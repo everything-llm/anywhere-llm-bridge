@@ -12,6 +12,7 @@ import { invalid } from "./errors.mts";
 import { Upstream } from "./upstream.mts";
 import defaultAllow from "../default-allow.txt";
 import { defaultList } from "./allow.mts";
+import type { Runtime } from "./control/install.mts";
 import { health, install, uninstall, type Ctx } from "./install.mts";
 import { developerKey, pairingLink } from "./pair.mts";
 import { createServer } from "./server.mts";
@@ -22,7 +23,9 @@ const USAGE = `usage: anywherellm-bridge <command>
   install [--storage DIR]        point the bridge at AnythingLLM's storage (its .env holds the
           [--no-start]           password) and start it under your service manager
           [--service systemd|launchd|windows|foreground|auto]
-  uninstall                      stop the bridge; its settings stay
+          [--control]            also put the agent's control server (chats, scheduled jobs) into
+          [--runtime container|native] [--roles chat,schedule]    the storage, where AnythingLLM runs it
+  uninstall                      stop the bridge and take the control server out; its settings stay
   health                         check it all; exit 1 when a check fails
   serve                          run the bridge
   pair [--url U] [--bridge U] [--apps U]
@@ -40,10 +43,12 @@ const ctx: Ctx = {
   print: console.log,
   command: [process.execPath, fs.realpathSync(process.argv[1]), "serve"],
   defaultAllow: defaultList(defaultAllow),
+  controlSource: CONTROL_SOURCE,
+  node: process.execPath,
 };
 
 const OPTIONS: Record<string, ParseArgsConfig["options"]> = {
-  install: { storage: { type: "string" }, "no-start": { type: "boolean" }, service: { type: "string" } },
+  install: { storage: { type: "string" }, "no-start": { type: "boolean" }, service: { type: "string" }, control: { type: "boolean" }, runtime: { type: "string" }, roles: { type: "string" } },
   pair: { url: { type: "string" }, bridge: { type: "string" }, apps: { type: "string" } },
 };
 
@@ -65,7 +70,14 @@ async function main(argv: string[]): Promise<number | void> {
       return; // runs until stopped
     }
     case "install":
-      await install(ctx, { storage: text("storage"), start: !values["no-start"], service: text("service") });
+      await install(ctx, {
+        storage: text("storage"),
+        start: !values["no-start"],
+        service: text("service"),
+        control: values.control === true,
+        runtime: text("runtime") as Runtime | undefined,
+        roles: text("roles")?.split(",").map((s) => s.trim()).filter(Boolean),
+      });
       return 0;
     case "uninstall":
       uninstall(ctx);

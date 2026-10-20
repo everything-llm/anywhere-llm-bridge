@@ -2,7 +2,7 @@
 
 A bridge to the parts of AnythingLLM that only its own settings pages reach: its **internal API** (`/api`), which the developer API (`/api/v1`) leaves out. A client such as AnywhereLLM Lite calls the bridge with only a developer key; the bridge logs in to the internal API with AnythingLLM's password and passes on the routes you list.
 
-It needs nothing from AnythingLLM beyond a stock instance and adds no skill. Its only files are the fence's asks, which it shares with the suite's skills in AnythingLLM's storage (below). What each route does is AnythingLLM's own, so the caller knows the routes; [docs/endpoints.md](docs/endpoints.md) records the ones worth opening, with their shapes as AnythingLLM 1.16.2 gives them.
+It needs nothing from AnythingLLM beyond a stock instance and adds no skill. Its only files are the fence's asks, which it shares with the suite's skills in AnythingLLM's storage (below), and, if you ask for it, the control server (below), which is not part of the bridge's service. What each route does is AnythingLLM's own, so the caller knows the routes; [docs/endpoints.md](docs/endpoints.md) records the ones worth opening, with their shapes as AnythingLLM 1.16.2 gives them.
 
 It is one file, `dist/anywherellm-bridge.cjs`, that runs on Node 20.3 or later and needs nothing installed beside it. Only the phone app needs it. It moved here from [anywherellm-suite](https://github.com/BinaryBand/anywherellm-suite) (the control server and agent skills), whose installer no longer sets it up.
 
@@ -50,6 +50,19 @@ BRIDGE_ALLOW=GET /scheduled-jobs, GET /setup-complete, /workspaces, POST /system
 `/workspaces` passes `/workspaces/home/memories` but not `/workspaces-old`. `POST /workspace/*/thread/*/update` passes `/workspace/home/thread/abc/update` for any workspace and thread, and not `/workspace/home/update`: a route with the workspace in its middle can be allowed without allowing the whole `/workspace` tree, which also deletes a workspace and resets its vectors.
 
 `install` sets `BRIDGE_ALLOW` to the list in [default-allow.txt](default-allow.txt) (one entry per line there, joined with commas into the setting; `tools/routes` checks that AnythingLLM still has each route), unless the settings file sets it already, empty included. A list of your own stays. The bridge logs in as AnythingLLM's pages do: `POST /api/request-token` with the password, which is `AUTH_TOKEN` in AnythingLLM's `.env`. It keeps the token, logs in again after a 401, reads the password afresh at each login, and sends none when none is set. Multi-user mode isn't supported.
+
+## The control server
+
+The agent's own tools for AnythingLLM's chats (`chat_workspaces`, `chat_list`, `chat_history`, `chat_new`, `chat_rename`, `chat_clear`, `chat_delete`) and, with the `schedule` role, its scheduled jobs (one tool, `schedule`: list, add, update, delete). It is a second file, `dist/control.cjs`, built into the bridge, which `install --control` writes into the storage (`<storage>/anywherellm-bridge/control.cjs`) with an entry `control` in `plugins/anythingllm_mcp_servers.json`. AnythingLLM starts it itself as an MCP server over stdio, with its own `node` (the image's, Node 18) and its own environment, so it logs in to the internal API with `AUTH_TOKEN` as it finds it there: no service, socket or key, and the bridge doesn't need to be running. It moved here from the suite (see [docs/notes.md](docs/notes.md)).
+
+```sh
+node anywherellm-bridge.cjs install --storage DIR --control --no-start    # the control server only, no phone
+node anywherellm-bridge.cjs install --storage DIR --control --roles chat,schedule
+```
+
+- `--roles` is `chat` (default, and what a reinstall keeps) and/or `schedule`. Only `chat` is on by default: a scheduled job runs a prompt as the agent, unattended, so adding one plants an instruction that runs later.
+- `--runtime container|native`: the entry runs the container's own `node` on the path the container sees (`/app/server/storage`), or the `node` that ran install, on the host's path. A reinstall keeps the runtime of the entry it finds; otherwise native for AnythingLLM Desktop's storage and container for any other.
+- Then, in AnythingLLM, Settings > Agent Skills: refresh the MCP servers (or restart AnythingLLM). `health` checks the file and the entry; `uninstall` takes both out. A `control` entry that isn't ours (decided by the path it starts) stops install.
 
 ## Settings
 
@@ -114,7 +127,7 @@ On Linux these need sudo unless you ran `tailscale set --operator=$USER` once.
 ## Develop
 
 - `npm run typecheck` and `npm test` (which builds first) are the gate: `lefthook.yml` runs them before a push, and `.github/workflows/test.yml` on Linux, macOS and Windows. `tools/e2e` starts a throwaway AnythingLLM in a container (podman or docker), installs and serves the bridge against it and runs `tools/e2e.test.mts`; `tools/e2e command...` runs that command in place of the tests, with the addresses and key in `E2E_*`, so a client such as AnywhereLLM Lite runs its own e2e against a real bridge. `tools/routes` reads the pinned image (`versions.env`) and fails for any rule in `default-allow.txt` AnythingLLM no longer declares; `--stamp` records the version.
-- `src/` is flat: `allow.mts` (the rules) and `settings.mts` do no I/O; `upstream.mts` is AnythingLLM's client; `server.mts` the HTTP side; `asks.mts` the fence's asks; `install.mts`, `service/`, `pair.mts` and `envfile.mts` the deployment; `main.mts` the commands. `upstream.mts`, `envfile.mts`, `paths.mts`, `atomic.mts` (its lock and JSON helpers too) and the rules in `private.mts` are copies of the suite's `packages/shared` helpers, which the suite's control server still uses; the two copies don't track each other.
+- `src/control/` is the control server (an MCP server over stdio, `main.mts` its entry) and `control/install.mts` what `install --control` writes; `tests/control-*.test.mts` test it, `tests/fakes/control.mts` stands in for the internal API behind a login. `src/` is otherwise flat: `allow.mts` (the rules) and `settings.mts` do no I/O; `upstream.mts` is AnythingLLM's client; `server.mts` the HTTP side; `asks.mts` the fence's asks; `install.mts`, `service/`, `pair.mts` and `envfile.mts` the deployment; `main.mts` the commands. `upstream.mts`, `envfile.mts`, `paths.mts`, `atomic.mts` (its lock and JSON helpers too) and the rules in `private.mts` are copies of the suite's `packages/shared` helpers, which the suite's control server still uses; the two copies don't track each other.
 - [docs/notes.md](docs/notes.md) has the decisions and their reasons.
 - Tests import `src/` directly (Node strips the types), except `bundle.test.mts`, which runs the built file. `tests/fakes/anythingllm.mts` stands in for AnythingLLM's two APIs on a port of its own, so `server.test.mts` runs the real bridge against it, with and without AnythingLLM's password.
 - `service.test.mts` runs `install`, `uninstall` and `health` against a scripted `systemctl` and a real bridge on a free port. A client that leaves ends the upstream call (`server.test.mts`, with a route the fake AnythingLLM never answers).

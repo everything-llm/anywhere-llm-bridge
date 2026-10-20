@@ -2,7 +2,8 @@
 # tools/e2e: the bridge against the real thing. Starts a throwaway AnythingLLM (the image in
 # versions.env) on a free port with its storage bind-mounted from a temporary folder, as
 # AnythingLLM's Docker instructions do; runs the built `anywherellm-bridge install --no-start`
-# against that storage, its `serve` on another free port, makes a developer key and a workspace,
+# against that storage (with --control, so AnythingLLM starts the control server itself), its `serve`
+# on another free port, makes a developer key and a workspace,
 # and runs tools/e2e.test.mts, or with arguments (`tools/e2e command...`) that command in its
 # place, as a client's own e2e does. Everything lives in the
 # temporary folder and a container of its own; both are removed on the way out, pass or fail, and
@@ -61,7 +62,7 @@ echo "[e2e] anywherellm-bridge install"
 (cd "$ROOT" && node build.mjs >/dev/null)
 cli="$ROOT/dist/anywherellm-bridge.cjs"
 export BRIDGE_ENV_FILE="$work/bridge.env" BRIDGE_PORT="$bridge_port" ANYTHINGLLM_URL="$allm"
-node "$cli" install --storage "$storage" --no-start >"$work/install.log"
+node "$cli" install --storage "$storage" --no-start --control --roles chat,schedule >"$work/install.log"
 
 echo "[e2e] the bridge on :$bridge_port"
 node "$cli" serve >"$work/bridge.log" 2>&1 &
@@ -74,7 +75,7 @@ key=$(curl -fs -X POST "$allm/api/system/generate-api-key" -H "Authorization: Be
 workspace=$(curl -fs -X POST "$allm/api/v1/workspace/new" -H "Authorization: Bearer $key" \
   -H 'Content-Type: application/json' -d '{"name":"E2E Workspace"}' | json 'j.workspace.slug')
 
-export E2E_ENGINE="$engine" E2E_CONTAINER="$name" E2E_ALLM_URL="$allm" E2E_ALLM_PORT="$allm_port" \
+export E2E_ENGINE="$engine" E2E_CONTAINER="$name" E2E_CONTROL="$INNER_STORAGE/anywherellm-bridge/control.cjs" E2E_ALLM_URL="$allm" E2E_ALLM_PORT="$allm_port" \
   E2E_PASSWORD="$password" E2E_BRIDGE_URL="$bridge" E2E_BRIDGE_PORT="$bridge_port" E2E_KEY="$key" \
   E2E_WORKSPACE="$workspace" E2E_CLI="$cli" E2E_STORAGE="$storage"
 if [ $# -gt 0 ]; then
