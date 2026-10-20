@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { parseRules } from "../src/allow.mts";
-import { Asks, checkHost } from "../src/asks.mts";
+import { Asks, checkOrigin } from "../src/asks.mts";
 import { createServer } from "../src/server.mts";
 import { Upstream } from "../src/upstream.mts";
 import { FakeAnythingLLM } from "./fakes/anythingllm.mts";
@@ -91,7 +91,7 @@ test("an ask is read as the skill wrote it", async () => {
   assert.deepEqual([res.json.ask.host, res.json.ask.origin, res.json.ask.workspace, res.json.ask.decision], ["muse-vm", "http://muse-vm:8463", "home", null]);
 });
 
-test("Allow once writes the decision and leaves the allowed hosts alone", async () => {
+test("Allow once writes the decision and leaves the allowed addresses alone", async () => {
   writeAsk();
   const res = await call("POST", `/asks/${ID}`, { decision: "once" });
   assert.deepEqual([res.status, res.json.ask.decision, res.json.ask.decided], [200, "once", NOW.toISOString()]);
@@ -100,19 +100,36 @@ test("Allow once writes the decision and leaves the allowed hosts alone", async 
   assert.equal(fs.existsSync(path.join(dir, "asks", `${ID}.json.lock`)), false);
 });
 
-test("Always allow adds the host once, and the list is read and taken from", async () => {
+test("Always allow adds the origin once, and the list is read and taken from", async () => {
   writeAsk();
   assert.equal((await call("POST", `/asks/${ID}`, { decision: "always" })).status, 200);
   const other = "f".repeat(32);
-  writeAsk({ id: other, host: "MUSE-VM" });
+  writeAsk({ id: other, host: "MUSE-VM", origin: "HTTP://MUSE-VM:8463" });
   assert.equal((await call("POST", `/asks/${other}`, { decision: "always" })).status, 200);
-  assert.deepEqual((await call("GET", "/allowed")).json, { hosts: [{ host: "muse-vm", added: NOW.toISOString() }] });
+  const third = "e".repeat(32);
+  writeAsk({ id: third, origin: "http://muse-vm:8080" });
+  assert.equal((await call("POST", `/asks/${third}`, { decision: "always" })).status, 200);
+  const added = NOW.toISOString();
+  assert.deepEqual((await call("GET", "/allowed")).json, {
+    origins: [
+      { origin: "http://muse-vm:8463", added },
+      { origin: "http://muse-vm:8080", added },
+    ],
+  });
   assert.equal(fs.statSync(allowedFile()).mode & 0o777, 0o600);
-  const gone = await call("DELETE", "/allowed/MUSE-VM");
-  assert.deepEqual([gone.status, gone.json], [200, { hosts: [] }]);
-  const again = await call("DELETE", "/allowed/muse-vm");
+  const gone = await call("DELETE", `/allowed?origin=${encodeURIComponent("HTTP://Muse-VM:8463")}`);
+  assert.deepEqual([gone.status, gone.json], [200, { origins: [{ origin: "http://muse-vm:8080", added }] }]);
+  const again = await call("DELETE", `/allowed?origin=${encodeURIComponent("http://muse-vm:8463")}`);
   assert.equal(again.status, 404);
   assert.match(again.json.error, /isn't always allowed/);
+});
+
+test("an allowed.json written by host allows nothing, and is written again by origin", async () => {
+  fs.writeFileSync(allowedFile(), JSON.stringify({ hosts: [{ host: "muse-vm", added: NOW.toISOString() }] }));
+  assert.deepEqual((await call("GET", "/allowed")).json, { origins: [] });
+  writeAsk();
+  assert.equal((await call("POST", `/asks/${ID}`, { decision: "always" })).status, 200);
+  assert.deepEqual(JSON.parse(fs.readFileSync(allowedFile(), "utf8")).origins, [{ origin: "http://muse-vm:8463", added: NOW.toISOString() }]);
 });
 
 test("an ask answered already or expired is a 409, and one that's gone a 404", async () => {
@@ -130,7 +147,7 @@ test("an ask answered already or expired is a 409, and one that's gone a 404", a
   assert.equal((await call("POST", `/asks/${ID}`, { decision: "deny" })).status, 404);
 });
 
-test("a bad id, host, decision or method is refused before any file is touched", async () => {
+test("a bad id, address, decision or method is refused before any file is touched", async () => {
   writeAsk();
   for (const route of ["/asks/ABCDEF0123456789abcdef0123456789", "/asks/123"]) {
     const res = await call("GET", route);
@@ -141,6 +158,8 @@ test("a bad id, host, decision or method is refused before any file is touched",
   // An encoded `/` is a separator, as on the routes passed on: these have a segment too many.
   assert.equal((await call("GET", "/asks/..%2Fallowed")).status, 404);
   assert.equal((await call("DELETE", "/allowed/a%2Fb")).status, 404);
+  assert.equal((await call("DELETE", "/allowed")).status, 400);
+  assert.equal((await call("DELETE", `/allowed?origin=${encodeURIComponent("http://muse-vm:8463/x")}`)).status, 400);
   assert.equal((await call("DELETE", `/asks/${ID}`)).status, 405);
   assert.equal((await call("POST", "/allowed")).status, 405);
   assert.equal((await call("GET", `/asks/${ID}/more`)).status, 404);
@@ -179,9 +198,11 @@ test("a decision waits for the skill's lock on the ask", async () => {
   assert.equal(readAsk().decision, "once");
 });
 
-test("a host is a bare name or address, in lower case", () => {
-  assert.equal(checkHost(" Muse-VM.tail1234.ts.net "), "muse-vm.tail1234.ts.net");
-  assert.equal(checkHost("100.64.0.7"), "100.64.0.7");
-  assert.equal(checkHost("fd7a:115c:a1e0::1"), "fd7a:115c:a1e0::1");
-  for (const bad of ["", "a/b", "muse-vm:8463x", "-x", "a..b", "[::1]", "x".repeat(254)]) assert.throws(() => checkHost(bad), JSON.stringify(bad));
+test("an origin is a scheme, a host and a port, and nothing else", () => {
+  assert.equal(checkOrigin(" HTTPS://Muse-VM.tail1234.ts.net:443 "), "https://muse-vm.tail1234.ts.net");
+  assert.equal(checkOrigin("http://100.64.0.7:8463"), "http://100.64.0.7:8463");
+  assert.equal(checkOrigin("http://[fd7a:115c:a1e0::1]:80"), "http://[fd7a:115c:a1e0::1]");
+  for (const bad of ["", "muse-vm", "muse-vm:8463", "ftp://muse-vm", "http://muse-vm/", "http://muse-vm/x", "http://muse-vm?a", "http://muse-vm#a", "http://u:p@muse-vm"]) {
+    assert.throws(() => checkOrigin(bad), JSON.stringify(bad));
+  }
 });

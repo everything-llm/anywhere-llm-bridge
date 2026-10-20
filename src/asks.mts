@@ -1,20 +1,21 @@
-// The fence's asks: what a suite skill asks the person before it reaches a host on their own
-// network, and the hosts they always allow. The skills run inside AnythingLLM and can't reach the
+// The fence's asks: what a suite skill asks the person before it reaches an address on their own
+// network, and the addresses they always allow. The skills run inside AnythingLLM and can't reach the
 // bridge, so the two share AnythingLLM's storage folder, `<storage>/fence-lean/`:
 //
 //   asks/<id>.json   {id, host, origin, skill, workspace, why, asked, expires, decision, decided},
 //                    written by the skill, which waits for `decision` and removes the file
-//   allowed.json     {hosts: [{host, added}]}, which every skill reads beside FENCE_ALLOW
+//   allowed.json     {origins: [{origin, added}]}, which every skill reads beside FENCE_ALLOW
 //
-// The bridge only reads an ask and writes its decision, under the same lock folders the suite's
-// `updateJson` takes. An id is 32 hex digits and a host a bare name or address, so no path leaves
-// the folder.
+// An allowed address is one origin (scheme, host and port), so allowing a server on one port
+// leaves the machine's other ports asking. The bridge only reads an ask and writes its decision,
+// under the same lock folders the suite's `updateJson` takes. An id is 32 hex digits, so no path
+// leaves the folder.
 
 import path from "node:path";
 import { invalid, conflict, notFound } from "./errors.mts";
 import { readJson, updateJson } from "./atomic.mts";
 
-/** What the person decides: this host for the rest of the answer, from now on, or not. */
+/** What the person decides: this address for the rest of the answer, from now on, or not. */
 export const DECISIONS = ["once", "always", "deny"] as const;
 export type Decision = (typeof DECISIONS)[number];
 
@@ -32,14 +33,11 @@ export interface Ask {
 }
 
 export interface Allowed {
-  host: string;
+  origin: string;
   added: string;
 }
 
 const ID = /^[0-9a-f]{32}$/;
-// A host name (labels of letters, digits and hyphens) or an IPv4 or IPv6 address, as the fence
-// compares it: lower case, no port, no brackets, no zone.
-const HOST = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*|[0-9a-f:.]*:[0-9a-f:.]*)$/;
 
 /** `id` when it is one, else a 400. */
 export function checkId(id: string): string {
@@ -47,11 +45,16 @@ export function checkId(id: string): string {
   return id;
 }
 
-/** `host` lower-cased when it is a bare name or address, else a 400. */
-export function checkHost(raw: string): string {
-  const host = raw.trim().toLowerCase();
-  if (!host || host.length > 253 || !HOST.test(host)) throw invalid(`${JSON.stringify(raw.slice(0, 100))} isn't a host name or address`);
-  return host;
+/** `raw` as an origin (`URL.origin`: lower-case host, no default port) when it is an http or https
+ *  address with nothing but a scheme, host and port, else a 400. */
+export function checkOrigin(raw: string): string {
+  let url: URL | null = null;
+  try {
+    url = new URL(raw.trim());
+  } catch {}
+  const bare = url && (url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password && url.pathname === "/" && !url.search && !url.hash && !/[/?#]$/.test(raw.trim());
+  if (!url || !bare) throw invalid(`${JSON.stringify(raw.slice(0, 100))} isn't an address: an http or https scheme, a host and a port, nothing else`);
+  return url.origin;
 }
 
 /** `decision` when it is one, else a 400. */
@@ -65,7 +68,15 @@ function gone(): never {
   throw notFound("no such ask: it was answered, or the skill stopped waiting");
 }
 
-const noHosts = (): { hosts: Allowed[] } => ({ hosts: [] });
+type AllowedFile = { origins: Allowed[] };
+const noOrigins = (): AllowedFile => ({ origins: [] });
+
+/** The allowed list of `value`, made one when it has none: an allowed.json an earlier edition
+ *  wrote by host (`{hosts}`) allows nothing. */
+function listed(value: Partial<AllowedFile>): Allowed[] {
+  if (!Array.isArray(value.origins)) value.origins = [];
+  return value.origins;
+}
 
 export class Asks {
   readonly #dir: string;
@@ -87,7 +98,7 @@ export class Asks {
     return readJson<Ask>(this.#askFile(id), gone);
   }
 
-  /** Writes the person's decision to the ask, and for `always` adds its host to the allowed ones.
+  /** Writes the person's decision to the ask, and for `always` adds its origin to the allowed ones.
    *  A 409 when it is decided already or expired, a 404 when it is gone. */
   async decide(id: string, decision: Decision): Promise<Ask> {
     const ask = await updateJson<Ask, Ask>(this.#askFile(id), gone, (found) => {
@@ -98,28 +109,30 @@ export class Asks {
       found.decided = now.toISOString();
       return found;
     });
-    if (decision === "always") await this.#allow(checkHost(ask.host));
+    if (decision === "always") await this.#allow(checkOrigin(ask.origin));
     return ask;
   }
 
-  /** The hosts always allowed. */
+  /** The addresses always allowed. */
   allowed(): Allowed[] {
-    return readJson(this.#allowedFile, noHosts).hosts;
+    return listed(readJson(this.#allowedFile, noOrigins));
   }
 
-  async #allow(host: string): Promise<void> {
-    await updateJson(this.#allowedFile, noHosts, (value) => {
-      if (!value.hosts.some((h) => h.host === host)) value.hosts.push({ host, added: this.#now().toISOString() });
+  async #allow(origin: string): Promise<void> {
+    await updateJson(this.#allowedFile, noOrigins, (value) => {
+      const origins = listed(value);
+      if (!origins.some((o) => o.origin === origin)) origins.push({ origin, added: this.#now().toISOString() });
     });
   }
 
-  /** Takes `host` off the allowed ones and answers those left; a 404 when it isn't one. */
+  /** Takes `origin` off the allowed ones and answers those left; a 404 when it isn't one. */
   forget(raw: string): Promise<Allowed[]> {
-    const host = checkHost(raw);
-    return updateJson(this.#allowedFile, noHosts, (value) => {
-      const left = value.hosts.filter((h) => h.host !== host);
-      if (left.length === value.hosts.length) throw notFound(`${host} isn't always allowed`);
-      value.hosts = left;
+    const origin = checkOrigin(raw);
+    return updateJson(this.#allowedFile, noOrigins, (value) => {
+      const origins = listed(value);
+      const left = origins.filter((o) => o.origin !== origin);
+      if (left.length === origins.length) throw notFound(`${origin} isn't always allowed`);
+      value.origins = left;
       return left;
     });
   }

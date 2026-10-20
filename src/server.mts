@@ -3,16 +3,17 @@
 //
 //   GET /health            no key needed
 //   GET /asks/<id>         an ask of the fence's, and POST it {decision} to answer it (asks.mts)
-//   GET /allowed           the hosts always allowed, and DELETE /allowed/<host> to take one off
+//   GET /allowed           the addresses always allowed, and DELETE /allowed?origin=<origin> to
+//                          take one off
 //   <METHOD> /<path>       AnythingLLM's own `/api/<path>`, its status and JSON passed through,
 //                          for the routes BRIDGE_ALLOW lists (allow.mts); any other is 403
 //
 // Every route but /health needs a developer key AnythingLLM accepts (Authorization: Bearer <key>);
-// the asks and the allowed hosts take only the key named AnywhereLLM, the phones' own, so no other
+// the asks and the allowed addresses take only the key named AnywhereLLM, the phones' own, so no other
 // key (an agent's) answers an ask. Any origin may call them, and a preflight needs no key. The
-// asks and the allowed hosts are there only when the bridge knows AnythingLLM's storage. The
+// asks and the allowed addresses are there only when the bridge knows AnythingLLM's storage. The
 // bridge's own failures are `{"error": "..."}`: 400 a bad request, 401 no accepted key, 403 a route
-// not allowed, 404 no such ask or host, 409 an ask answered or expired, 502 AnythingLLM can't be
+// not allowed, 404 no such ask or address, 409 an ask answered or expired, 502 AnythingLLM can't be
 // reached or refused the bridge's login, 503 a file another writer holds.
 
 import http from "node:http";
@@ -74,8 +75,15 @@ function send(res: http.ServerResponse, status: number, json: unknown): void {
 /** Whether `path` is one of the bridge's own routes rather than AnythingLLM's. */
 const isOwn = (path: string): boolean => path === "/allowed" || path.startsWith("/allowed/") || path === "/asks" || path.startsWith("/asks/");
 
-/** The answer to one of the bridge's own routes, `path` decoded. */
-async function own(asks: Asks, method: string, path: string, body: () => Promise<unknown>): Promise<unknown> {
+/** The `origin` parameter of a query, or a 400. */
+function originIn(query: string): string {
+  const origin = new URLSearchParams(query).get("origin");
+  if (!origin) throw invalid("name the address: ?origin=<scheme://host:port>");
+  return origin;
+}
+
+/** The answer to one of the bridge's own routes, `path` decoded and `query` as sent. */
+async function own(asks: Asks, method: string, path: string, query: string, body: () => Promise<unknown>): Promise<unknown> {
   const [, kind, arg, ...more] = path.split("/");
   if (more.length) throw notFound("no such route");
   if (kind === "asks" && arg) {
@@ -84,12 +92,9 @@ async function own(asks: Asks, method: string, path: string, body: () => Promise
     throw notAllowed("an ask is read with GET and answered with POST");
   }
   if (kind === "allowed" && arg === undefined) {
-    if (method === "GET") return { hosts: asks.allowed() };
-    throw notAllowed("the allowed hosts are read with GET");
-  }
-  if (kind === "allowed" && arg) {
-    if (method === "DELETE") return { hosts: await asks.forget(arg) };
-    throw notAllowed("an allowed host is taken off with DELETE");
+    if (method === "GET") return { origins: asks.allowed() };
+    if (method === "DELETE") return { origins: await asks.forget(originIn(query)) };
+    throw notAllowed("the allowed addresses are read with GET, and one taken off with DELETE");
   }
   throw notFound("no such route");
 }
@@ -115,7 +120,7 @@ export function createServer({ rules, upstream, asks = null, log }: Deps): http.
       const name = await upstream.keyName(key);
       if (name === null) throw unauthorized("send a developer API key AnythingLLM accepts");
       if (name !== KEY_NAME) throw forbidden(`only the developer key named ${KEY_NAME}, the one pair hands out, answers asks`);
-      return send(res, 200, await own(asks, method, path, () => bodyOf(req)));
+      return send(res, 200, await own(asks, method, path, query, () => bodyOf(req)));
     }
     if (!(await upstream.keyValid(key))) throw unauthorized("send a developer API key AnythingLLM accepts");
     if (!METHODS.includes(method)) throw notAllowed(`the bridge passes ${METHODS.join(", ")}, not ${method}`);

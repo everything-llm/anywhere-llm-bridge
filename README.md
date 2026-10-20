@@ -28,16 +28,16 @@ It listens on `BRIDGE_PORT` (8467), on 127.0.0.1.
 - A client that disconnects before the answer ends the call to AnythingLLM too (Node 20.3 or later for `AbortSignal.any`); a POST may already have taken effect there.
 - Replies are JSON. A route that sends a file or a stream isn't for the bridge.
 
-**The fence's asks.** The suite's skills refuse any host on your own network that `FENCE_ALLOW` doesn't name. During a chat a phone streams, a skill asks instead: it writes the ask to `<storage>/fence-lean/asks/<id>.json`, says `[ask:<id>]` in its status line, and waits up to 120 s for a decision. The bridge is how the phone reads and answers it. These routes are the bridge's own, not AnythingLLM's, and are there only when `ANYTHINGLLM_STORAGE` is set:
+**The fence's asks.** The suite's skills refuse any address on your own network that `FENCE_ALLOW` doesn't name. During a chat a phone streams, a skill asks instead: it writes the ask to `<storage>/fence-lean/asks/<id>.json`, says `[ask:<id>]` in its status line, and waits up to 120 s for a decision. The bridge is how the phone reads and answers it. These routes are the bridge's own, not AnythingLLM's, and are there only when `ANYTHINGLLM_STORAGE` is set:
 
 | Route | Answer |
 | --- | --- |
 | `GET /asks/<id>` | `{"ask": {id, host, origin, skill, workspace, why, asked, expires, decision, decided}}`; 404 once the skill stopped waiting |
-| `POST /asks/<id>` `{"decision": "once" \| "always" \| "deny"}` | `{"ask"}` with `decision` and `decided` set; 409 when it was answered or expired. `always` adds its host to `<storage>/fence-lean/allowed.json`, which every skill reads beside `FENCE_ALLOW` |
-| `GET /allowed` | `{"hosts": [{host, added}]}`, the hosts always allowed |
-| `DELETE /allowed/<host>` | `{"hosts"}` left; 404 when it isn't one |
+| `POST /asks/<id>` `{"decision": "once" \| "always" \| "deny"}` | `{"ask"}` with `decision` and `decided` set; 409 when it was answered or expired. `always` adds its origin (scheme, host and port) to `<storage>/fence-lean/allowed.json`, which every skill reads beside `FENCE_ALLOW`; the host's other ports still ask |
+| `GET /allowed` | `{"origins": [{origin, added}]}`, the addresses always allowed |
+| `DELETE /allowed?origin=<origin>` | `{"origins"}` left; 404 when it isn't one, 400 when it isn't an origin |
 
-They take only the developer key named `AnywhereLLM`, the one `pair` hands out, which the bridge looks up in AnythingLLM's key list (cached as the key check is): a key not in the list gets 401, and any other key in it 403, so a key the agent holds can't answer its own ask. An id is 32 hex digits and a host a bare name or address; anything else is a 400. The bridge writes under the same lock folders as the suite's `updateJson` (`<file>.lock`), so the two never write over each other.
+They take only the developer key named `AnywhereLLM`, the one `pair` hands out, which the bridge looks up in AnythingLLM's key list (cached as the key check is): a key not in the list gets 401, and any other key in it 403, so a key the agent holds can't answer its own ask. An id is 32 hex digits and an origin an http or https scheme, a host and a port with nothing after them (as `URL.origin` writes it: a lower-case host, no default port); anything else is a 400. An `allowed.json` an earlier edition wrote by host allows nothing. The bridge writes under the same lock folders as the suite's `updateJson` (`<file>.lock`), so the two never write over each other.
 
 **Why a list.** The bridge holds AnythingLLM's password, so anyone with a developer key could do what the settings pages do, down to reading the key list or rewriting `.env` through `system/update-env`, unless the bridge says no. List what a client needs and no more.
 
