@@ -1,5 +1,5 @@
 // The bridge's own failures, each with the status a client sees: 400 a bad request, 401 no
-// accepted key, 403 a route not allowed (or a key that may not decide asks), 404 an ask or a host
+// accepted key, 403 a route not allowed (or a key that may not decide asks, or a file that is a link), 404 an ask or a host
 // that isn't there, 405 another method, 409 an ask already decided or expired, 413 a body too
 // large, 502 AnythingLLM can't be reached or refused the login, 503 a file held by another writer.
 // The text is shown to the caller, who is a client or the person at the terminal.

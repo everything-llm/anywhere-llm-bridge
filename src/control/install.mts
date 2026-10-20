@@ -7,13 +7,15 @@
 // The entry runs the container's own node on the path the container sees (/app/server/storage), or
 // for AnythingLLM Desktop (and one run from source) the node that ran install, on the host's path.
 // Every other entry of the servers file stays, and so do the settings AnythingLLM keeps in ours
-// (`anythingllm`: suppressed tools, autoStart). Files are written in place, not renamed over, since
-// a file in AnythingLLM's storage may belong to its user and group.
+// (`anythingllm`: suppressed tools, autoStart). Whatever runs in the container can write the
+// storage, so install, run on the host, follows no link there: a file, or a folder from the storage
+// down to it, that is a link is refused, and a file is written new and renamed over the old one
+// (keeping its mode; the folder's setgid keeps its group).
 
 import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { sameText } from "../atomic.mts";
+import { sameText, writeAtomic } from "../atomic.mts";
 import { invalid } from "../errors.mts";
 import type { Check } from "../install.mts";
 import { INNER_STORAGE } from "../paths.mts";
@@ -27,8 +29,18 @@ export const NAME = "control";
 const DIR = "anywherellm-bridge";
 const FILE = "control.cjs";
 
-export const serversFile = (storage: string): string => path.join(storage, "plugins", "anythingllm_mcp_servers.json");
-const controlFile = (storage: string): string => path.join(storage, DIR, FILE);
+/** `file`, below `storage`, when neither it nor a folder between them is a link; else a refusal. */
+function unlinked(storage: string, file: string): string {
+  const below = path.relative(storage, file).split(path.sep);
+  for (let i = 1; i <= below.length; i++) {
+    const at = path.join(storage, ...below.slice(0, i));
+    if (fs.lstatSync(at, { throwIfNoEntry: false })?.isSymbolicLink()) throw invalid(`${at} is a link; install follows none in the storage: remove it, then run install again`);
+  }
+  return file;
+}
+
+export const serversFile = (storage: string): string => unlinked(storage, path.join(storage, "plugins", "anythingllm_mcp_servers.json"));
+const controlFile = (storage: string): string => unlinked(storage, path.join(storage, DIR, FILE));
 
 /** The servers-file entry that starts the control server. */
 export function entry(runtime: Runtime, storage: string, roles: string[], node: string): Obj {
@@ -76,10 +88,7 @@ function holds(file: string, text: string): boolean {
 /** Writes `text` unless the file holds it already (holds); whether it wrote. */
 function write(file: string, text: string): boolean {
   if (holds(file, text)) return false;
-  writable(file, () => {
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, text);
-  });
+  writable(file, () => writeAtomic(file, text, fs.statSync(file, { throwIfNoEntry: false })?.mode ?? 0o644));
   return true;
 }
 
@@ -107,8 +116,15 @@ export function current(storage: string): ReturnType<typeof parseEntry> {
   }
 }
 
-/** Whether anything of the control server is in the storage: its file or an entry that is ours. */
-export const installed = (storage: string): boolean => fs.existsSync(controlFile(storage)) || current(storage) !== null;
+/** Whether anything of the control server is in the storage: its file, an entry that is ours, or a
+ *  link where one would be (which `checks` reports). */
+export function installed(storage: string): boolean {
+  try {
+    return fs.existsSync(controlFile(storage)) || current(storage) !== null;
+  } catch {
+    return true;
+  }
+}
 
 /** Sets our entry in the servers file, or with null drops it; what it did. */
 export function setEntry(storage: string, wanted: Obj | null): string {
@@ -132,19 +148,25 @@ export function put(storage: string, source: string, wantedEntry: Obj): string[]
 
 /** Takes out what `put` put in; what it did. */
 export function take(storage: string): string[] {
+  const file = controlFile(storage);
+  serversFile(storage); // a link there is refused before anything goes
   const done = current(storage) ? [setEntry(storage, null)] : [];
-  const folder = path.dirname(controlFile(storage));
-  if (fs.existsSync(controlFile(storage))) {
-    writable(folder, () => fs.rmSync(controlFile(storage)));
-    done.push(`removed ${controlFile(storage)}`);
+  if (fs.existsSync(file)) {
+    writable(path.dirname(file), () => fs.rmSync(file));
+    done.push(`removed ${file}`);
   }
   return done;
 }
 
 /** Whether what `put` puts there is there and current. */
 export function checks(storage: string, source: string): Check[] {
-  const file = controlFile(storage);
-  const why = !fs.existsSync(file) ? "missing" : sameText(file, source) ? "" : "not this version's";
+  let why = "";
+  try {
+    const file = controlFile(storage);
+    if (!fs.existsSync(file) || !sameText(file, source)) why = `${fs.existsSync(file) ? "not this version's" : "missing"}: run install --control again`;
+  } catch (e) {
+    why = (e as Error).message;
+  }
   let listed: Check;
   try {
     const found = serversIn(readServers(serversFile(storage)))[NAME];
@@ -153,5 +175,5 @@ export function checks(storage: string, source: string): Check[] {
   } catch (e) {
     listed = [`the ${NAME} entry`, false, (e as Error).message];
   }
-  return [["the control server", !why, why && `${why}: run install --control again`], listed];
+  return [["the control server", !why, why], listed];
 }

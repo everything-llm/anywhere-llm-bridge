@@ -41,16 +41,14 @@ test("put writes the server and the entry, and a second put changes nothing", ()
   assert.ok(installed(dir));
 });
 
-test("the servers file keeps other servers and AnythingLLM's settings in ours, and is written in place", () => {
+test("the servers file keeps other servers and AnythingLLM's settings in ours", () => {
   const dir = storage();
   const theirs = { command: "npx", args: ["some-server"] };
   fs.writeFileSync(serversFile(dir), JSON.stringify({ mcpServers: { theirs, control: { ...ENTRY, anythingllm: { suppressedTools: ["chat_delete"] } } }, other: 1 }));
-  const inode = fs.statSync(serversFile(dir)).ino;
   const wanted = entry("container", dir, ["chat", "schedule"], "node");
   setEntry(dir, wanted);
   const found = JSON.parse(fs.readFileSync(serversFile(dir), "utf8"));
   assert.deepEqual(found, { mcpServers: { theirs, control: { ...wanted, anythingllm: { suppressedTools: ["chat_delete"] } } }, other: 1 });
-  assert.equal(fs.statSync(serversFile(dir)).ino, inode);
   assert.match(setEntry(dir, null), /dropped control/);
   assert.deepEqual(servers(dir), { theirs });
   assert.match(setEntry(dir, null), /no control entry/);
@@ -91,6 +89,38 @@ test("checks find what is missing or not this version's", () => {
   assert.deepEqual(failing(), []);
   fs.writeFileSync(path.join(dir, "anywherellm-bridge", "control.cjs"), "old");
   assert.deepEqual(failing(), ["the control server: not this version's: run install --control again"]);
+});
+
+test("a link planted in the storage is never followed: install refuses and what it points at is untouched", { skip: process.platform === "win32" }, () => {
+  const plants: [string, (dir: string, victim: string) => void][] = [
+    ["anywherellm-bridge/control.cjs", (dir, victim) => (fs.mkdirSync(path.join(dir, "anywherellm-bridge")), fs.symlinkSync(path.join(victim, "secret"), path.join(dir, "anywherellm-bridge", "control.cjs")))],
+    ["plugins/anythingllm_mcp_servers.json", (dir, victim) => fs.symlinkSync(path.join(victim, "secret"), path.join(dir, "plugins", "anythingllm_mcp_servers.json"))],
+    ["anywherellm-bridge", (dir, victim) => fs.symlinkSync(victim, path.join(dir, "anywherellm-bridge"))],
+    ["plugins", (dir, victim) => (fs.rmdirSync(path.join(dir, "plugins")), fs.symlinkSync(victim, path.join(dir, "plugins")))],
+  ];
+  for (const [where, plant] of plants) {
+    const dir = storage();
+    const victim = fs.mkdtempSync(path.join(tmp, "victim-"));
+    fs.writeFileSync(path.join(victim, "secret"), "the host's own\n");
+    plant(dir, victim);
+    assert.throws(() => put(dir, SOURCE, ENTRY), { message: new RegExp(`${path.join(dir, where)} is a link`) }, where);
+    assert.throws(() => take(dir), /is a link/, where);
+    assert.deepEqual(fs.readdirSync(victim), ["secret"], where);
+    assert.equal(fs.readFileSync(path.join(victim, "secret"), "utf8"), "the host's own\n", where);
+    assert.ok(installed(dir), where);
+    assert.match(checks(dir, SOURCE).map(([, , detail]) => detail).join("\n"), /is a link/, where);
+  }
+});
+
+test("a file is written new and renamed over the old, keeping its mode", { skip: process.platform === "win32" }, () => {
+  const dir = storage();
+  fs.writeFileSync(serversFile(dir), "{}");
+  fs.chmodSync(serversFile(dir), 0o664);
+  const before = fs.statSync(serversFile(dir)).ino;
+  put(dir, SOURCE, ENTRY);
+  assert.notEqual(fs.statSync(serversFile(dir)).ino, before);
+  assert.equal(fs.statSync(serversFile(dir)).mode & 0o777, 0o664);
+  assert.deepEqual(fs.readdirSync(path.join(dir, "plugins")), ["anythingllm_mcp_servers.json"], "no temp file left");
 });
 
 test("a storage that isn't the user's to write says what to do", { skip: process.platform === "win32" || process.getuid?.() === 0 }, () => {

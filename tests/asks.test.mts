@@ -196,6 +196,35 @@ test("a decision waits for the skill's lock on the ask", async () => {
   assert.equal(readAsk().decision, "once");
 });
 
+test("Always allow stores the origin as checked, and one written another way is still known and forgotten", async () => {
+  writeAsk({ origin: " http://muse-vm:8463 " });
+  assert.equal((await call("POST", `/asks/${ID}`, { decision: "always" })).status, 200);
+  assert.deepEqual((await call("GET", "/allowed")).json.origins.map((o: { origin: string }) => o.origin), ["http://muse-vm:8463"]);
+  // An entry the bridge didn't write: the fence reads it as its origin, so it is one to forget.
+  const added = NOW.toISOString();
+  fs.writeFileSync(allowedFile(), JSON.stringify({ origins: [{ origin: " HTTP://Muse-VM:80/ ", added }, { origin: "http://muse-vm:8463", added }] }));
+  const other = "f".repeat(32);
+  writeAsk({ id: other, origin: "http://muse-vm" });
+  assert.equal((await call("POST", `/asks/${other}`, { decision: "always" })).status, 200);
+  assert.equal(JSON.parse(fs.readFileSync(allowedFile(), "utf8")).origins.length, 2, "not added twice");
+  const gone = await call("DELETE", `/allowed?origin=${encodeURIComponent("http://muse-vm")}`);
+  assert.deepEqual([gone.status, gone.json.origins.map((o: { origin: string }) => o.origin)], [200, ["http://muse-vm:8463"]]);
+});
+
+test("an ask that is a link is refused, not followed", { skip: process.platform === "win32" }, async () => {
+  const secret = path.join(tmp, `secret-${process.pid}.json`);
+  fs.writeFileSync(secret, JSON.stringify({ id: ID, origin: "the host's own" }));
+  fs.mkdirSync(path.join(dir, "asks"), { recursive: true });
+  fs.symlinkSync(secret, path.join(dir, "asks", `${ID}.json`));
+  for (const [method, body] of [["GET", undefined], ["POST", { decision: "once" }]] as const) {
+    const res = await call(method, `/asks/${ID}`, body);
+    assert.equal(res.status, 403, method);
+    assert.match(res.json.error, /is a link/);
+    assert.ok(!JSON.stringify(res.json).includes("the host's own"));
+  }
+  assert.equal(JSON.parse(fs.readFileSync(secret, "utf8")).origin, "the host's own");
+});
+
 test("an origin is a scheme, a host and a port, and nothing else", () => {
   assert.equal(checkOrigin(" https://muse-vm.tail1234.ts.net "), "https://muse-vm.tail1234.ts.net");
   assert.equal(checkOrigin("http://100.64.0.7:8463"), "http://100.64.0.7:8463");
