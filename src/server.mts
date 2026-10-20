@@ -74,16 +74,10 @@ function send(res: http.ServerResponse, status: number, json: unknown): void {
 /** Whether `path` is one of the bridge's own routes rather than AnythingLLM's. */
 const isOwn = (path: string): boolean => path === "/allowed" || path.startsWith("/allowed/") || path === "/asks" || path.startsWith("/asks/");
 
-/** The answer to one of the bridge's own routes. */
-async function own(asks: Asks, method: string, rawPath: string, body: () => Promise<unknown>): Promise<unknown> {
-  const [, kind, rawArg, ...more] = rawPath.split("/");
+/** The answer to one of the bridge's own routes, `path` decoded. */
+async function own(asks: Asks, method: string, path: string, body: () => Promise<unknown>): Promise<unknown> {
+  const [, kind, arg, ...more] = path.split("/");
   if (more.length) throw notFound("no such route");
-  let arg: string | undefined;
-  try {
-    arg = rawArg === undefined ? undefined : decodeURIComponent(rawArg);
-  } catch {
-    throw invalid("bad path");
-  }
   if (kind === "asks" && arg) {
     if (method === "GET") return { ask: asks.get(arg) };
     if (method === "POST") return { ask: await asks.decide(arg, checkDecision(((await body()) as { decision?: unknown } | undefined)?.decision)) };
@@ -110,19 +104,21 @@ export function createServer({ rules, upstream, asks = null, log }: Deps): http.
     const query = cut < 0 ? "" : url.slice(cut + 1);
     if (method === "OPTIONS") return send(res, 204, null);
     if (method === "GET" && rawPath === "/health") return send(res, 200, { ok: true, service: SERVICE, allow, asks: asks !== null });
-    const key = keyOf(req);
-    if (!(await upstream.keyValid(key))) throw unauthorized("send a developer API key AnythingLLM accepts");
-    if (asks && isOwn(rawPath)) {
-      if (!(await upstream.keyNamed(key, KEY_NAME))) throw forbidden(`only the developer key named ${KEY_NAME}, the one pair hands out, answers asks`);
-      return send(res, 200, await own(asks, method, rawPath, () => bodyOf(req)));
-    }
-    if (!METHODS.includes(method)) throw notAllowed(`the bridge passes ${METHODS.join(", ")}, not ${method}`);
     let path: string;
     try {
       path = decodeURIComponent(rawPath); // as a router hands it on: an encoded `/` is a separator
     } catch {
       throw invalid("bad path");
     }
+    const key = keyOf(req);
+    if (asks && isOwn(path)) {
+      const name = await upstream.keyName(key);
+      if (name === null) throw unauthorized("send a developer API key AnythingLLM accepts");
+      if (name !== KEY_NAME) throw forbidden(`only the developer key named ${KEY_NAME}, the one pair hands out, answers asks`);
+      return send(res, 200, await own(asks, method, path, () => bodyOf(req)));
+    }
+    if (!(await upstream.keyValid(key))) throw unauthorized("send a developer API key AnythingLLM accepts");
+    if (!METHODS.includes(method)) throw notAllowed(`the bridge passes ${METHODS.join(", ")}, not ${method}`);
     const body = await bodyOf(req);
     const reply = await upstream.exchange(method, route(rules, method, path, query), body, BRIDGE_TIMEOUT, gone);
     send(res, reply.status, reply.json);

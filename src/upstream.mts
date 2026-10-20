@@ -82,10 +82,16 @@ export interface Password {
 /** The password in an .env file, as AUTH_TOKEN. */
 export const passwordIn = (envFile: string): Password => ({ read: () => readEnv(envFile).AUTH_TOKEN || "", where: `the password in ${envFile}` });
 
-interface Held {
-  ok: Promise<boolean>;
+interface Held<T> {
+  value: Promise<T>;
   /** Infinity while the question is out. */
   until: number;
+}
+
+/** A developer key in AnythingLLM's key list. */
+export interface DeveloperKey {
+  name?: string;
+  secret?: string;
 }
 
 export class Upstream {
@@ -93,8 +99,8 @@ export class Upstream {
   readonly #password: Password | null;
   readonly #now: () => number;
   #token: Promise<string> | null = null;
-  #seen = new Map<string, Held>();
-  #named = new Map<string, Held>();
+  #seen = new Map<string, Held<boolean>>();
+  #named = new Map<string, Held<string | null>>();
 
   /** `password` is null for none. */
   constructor(baseUrl: string, password: Password | null, now: () => number = () => performance.now()) {
@@ -148,44 +154,51 @@ export class Upstream {
   /** Whether AnythingLLM takes a developer key (`GET /api/v1/auth`), remembered OK_FOR ms when it
    *  does and BAD_FOR when it doesn't. Calls made at once with one key share one question. */
   keyValid(key: string): Promise<boolean> {
-    return this.#remember(this.#seen, key, async () => {
+    return this.#remember(this.#seen, key, false, (ok) => ok, async () => {
       const { status } = await request(`${this.#base}/api/v1/auth`, { token: key, timeout: KEY_TIMEOUT });
       if (status >= 500) throw upstreamError(`AnythingLLM answered ${status} when asked about a key`);
       return status === 200;
     });
   }
 
-  /** Whether `key` is the developer key called `name` in AnythingLLM's key list (internal
-   *  `GET /api/system/api-keys`, through the bridge's login), remembered as `keyValid` is. */
-  keyNamed(key: string, name: string): Promise<boolean> {
-    return this.#remember(this.#named, `${name}\n${key}`, async () => {
-      const listed = (expect(await this.exchange("GET", "/system/api-keys", undefined, KEY_TIMEOUT)) as { apiKeys?: { name?: unknown; secret?: unknown }[] } | null)?.apiKeys;
-      return Array.isArray(listed) && listed.some((k) => k?.name === name && k.secret === key);
+  /** AnythingLLM's developer keys (internal `GET /api/system/api-keys`, through the bridge's login). */
+  async keys(timeout?: number): Promise<DeveloperKey[]> {
+    const listed = (expect(await this.exchange("GET", "/system/api-keys", undefined, timeout)) as { apiKeys?: DeveloperKey[] } | null)?.apiKeys;
+    return Array.isArray(listed) ? listed : [];
+  }
+
+  /** The name of the developer key `key` in AnythingLLM's key list, or null when it isn't one;
+   *  remembered as `keyValid`'s answer is. */
+  keyName(key: string): Promise<string | null> {
+    return this.#remember(this.#named, key, null, (name) => name !== null, async () => {
+      const found = (await this.keys(KEY_TIMEOUT)).find((k) => k?.secret === key);
+      return found ? String(found.name ?? "") : null;
     });
   }
 
-  /** `ask`'s answer about `key`, kept in `seen` by its digest: OK_FOR ms when true, BAD_FOR when
-   *  false, not at all when it failed. Calls made at once share one question. */
-  #remember(seen: Map<string, Held>, key: string, ask: () => Promise<boolean>): Promise<boolean> {
-    if (!key) return Promise.resolve(false);
+  /** `ask`'s answer about `key`, kept in `seen` by its digest: OK_FOR ms when `good` holds for it,
+   *  BAD_FOR when not, not at all when it failed. Calls made at once share one question. An empty
+   *  key is `none` without asking. */
+  #remember<T>(seen: Map<string, Held<T>>, key: string, none: T, good: (value: T) => boolean, ask: () => Promise<T>): Promise<T> {
+    if (!key) return Promise.resolve(none);
     const digest = crypto.createHash("sha256").update(key).digest("hex");
     const held = seen.get(digest);
-    if (held && held.until > this.#now()) return held.ok;
+    if (held && held.until > this.#now()) return held.value;
     if (seen.size >= MAX_KEYS) this.#forget(seen);
-    const entry: Held = { ok: Promise.resolve(false), until: Infinity };
-    entry.ok = ask().then((ok) => {
-      entry.until = this.#now() + (ok ? OK_FOR : BAD_FOR);
-      return ok;
+    const entry: Held<T> = { value: Promise.resolve(none), until: Infinity };
+    entry.value = ask().then((value) => {
+      entry.until = this.#now() + (good(value) ? OK_FOR : BAD_FOR);
+      return value;
     });
-    entry.ok.catch(() => {
+    entry.value.catch(() => {
       if (seen.get(digest) === entry) seen.delete(digest); // an unanswered question is asked again
     });
     seen.set(digest, entry);
-    return entry.ok;
+    return entry.value;
   }
 
   /** Makes room: drops what has expired, and if that is nothing, the oldest. */
-  #forget(seen: Map<string, Held>): void {
+  #forget<T>(seen: Map<string, Held<T>>): void {
     const now = this.#now();
     for (const [k, v] of seen) if (v.until <= now) seen.delete(k);
     if (seen.size >= MAX_KEYS) seen.delete(seen.keys().next().value as string);

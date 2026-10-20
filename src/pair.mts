@@ -6,7 +6,7 @@
 import net from "node:net";
 import { invalid, upstream as upstreamError } from "./errors.mts";
 import { privateAddress, privateName } from "./private.mts";
-import { expect, type Upstream } from "./upstream.mts";
+import { expect, type DeveloperKey, type Upstream } from "./upstream.mts";
 
 /** The developer key the phones share, the one `pair` hands out; only it may decide asks. */
 export const KEY_NAME = "AnywhereLLM";
@@ -44,18 +44,12 @@ export function pairingLink(url: string, key: string, bridge?: string | null, ap
   return "anywherellm://connect?" + fields.toString();
 }
 
-interface Key {
-  name?: string;
-  secret?: string;
-}
-
 /** The secret of the developer key called KEY_NAME, made when there is none. Every phone shares
  *  KEY_NAME's, so deleting it in AnythingLLM's settings disconnects them all. */
 export async function developerKey(api: Upstream): Promise<string> {
-  const listed = (expect(await api.exchange("GET", "/system/api-keys")) as { apiKeys?: Key[] } | null)?.apiKeys ?? [];
-  const found = listed.find((k) => k?.name === KEY_NAME && k.secret)?.secret;
+  const found = (await api.keys()).find((k) => k?.name === KEY_NAME && k.secret)?.secret;
   if (found) return found;
-  const made = expect(await api.exchange("POST", "/system/generate-api-key", { name: KEY_NAME })) as { apiKey?: Key; error?: string } | null;
+  const made = expect(await api.exchange("POST", "/system/generate-api-key", { name: KEY_NAME })) as { apiKey?: DeveloperKey; error?: string } | null;
   if (!made?.apiKey?.secret) throw upstreamError(`AnythingLLM made no key${made?.error ? `: ${made.error}` : ""}`);
   return made.apiKey.secret;
 }

@@ -11,9 +11,8 @@
 // the folder.
 
 import path from "node:path";
-import fs from "node:fs";
 import { invalid, conflict, notFound } from "./errors.mts";
-import { locked, readJson, updateJson, writeJson } from "./atomic.mts";
+import { readJson, updateJson } from "./atomic.mts";
 
 /** What the person decides: this host for the rest of the answer, from now on, or not. */
 export const DECISIONS = ["once", "always", "deny"] as const;
@@ -61,6 +60,13 @@ export function checkDecision(raw: unknown): Decision {
   throw invalid(`decision is one of ${DECISIONS.join(", ")}`);
 }
 
+/** An ask that isn't there: a 404. */
+function gone(): never {
+  throw notFound("no such ask: it was answered, or the skill stopped waiting");
+}
+
+const noHosts = (): { hosts: Allowed[] } => ({ hosts: [] });
+
 export class Asks {
   readonly #dir: string;
   readonly #now: () => Date;
@@ -78,26 +84,18 @@ export class Asks {
 
   /** The ask, or a 404. */
   get(id: string): Ask {
-    const ask = readJson<Ask | null>(this.#askFile(id), () => null);
-    if (!ask) throw notFound("no such ask: it was answered, or the skill stopped waiting");
-    return ask;
+    return readJson<Ask>(this.#askFile(id), gone);
   }
 
   /** Writes the person's decision to the ask, and for `always` adds its host to the allowed ones.
    *  A 409 when it is decided already or expired, a 404 when it is gone. */
   async decide(id: string, decision: Decision): Promise<Ask> {
-    const file = this.#askFile(id);
-    const ask = await locked(`${file}.lock`, "the ask", () => {
-      if (!fs.existsSync(file)) throw notFound("no such ask: it was answered, or the skill stopped waiting");
-      const found = readJson<Ask>(file, () => {
-        throw notFound("no such ask");
-      });
+    const ask = await updateJson<Ask, Ask>(this.#askFile(id), gone, (found) => {
       if (found.decision) throw conflict(`this ask was answered already: ${found.decision}`);
       const now = this.#now();
       if (!(Date.parse(found.expires) > now.getTime())) throw conflict("this ask expired; the skill went on without it");
       found.decision = decision;
       found.decided = now.toISOString();
-      writeJson(file, found);
       return found;
     });
     if (decision === "always") await this.#allow(checkHost(ask.host));
@@ -106,12 +104,11 @@ export class Asks {
 
   /** The hosts always allowed. */
   allowed(): Allowed[] {
-    return readJson<{ hosts?: Allowed[] }>(this.#allowedFile, () => ({ hosts: [] })).hosts ?? [];
+    return readJson(this.#allowedFile, noHosts).hosts;
   }
 
   async #allow(host: string): Promise<void> {
-    await updateJson(this.#allowedFile, () => ({ hosts: [] as Allowed[] }), (value) => {
-      value.hosts ??= [];
+    await updateJson(this.#allowedFile, noHosts, (value) => {
       if (!value.hosts.some((h) => h.host === host)) value.hosts.push({ host, added: this.#now().toISOString() });
     });
   }
@@ -119,9 +116,9 @@ export class Asks {
   /** Takes `host` off the allowed ones and answers those left; a 404 when it isn't one. */
   forget(raw: string): Promise<Allowed[]> {
     const host = checkHost(raw);
-    return updateJson(this.#allowedFile, () => ({ hosts: [] as Allowed[] }), (value) => {
-      const left = (value.hosts ?? []).filter((h) => h.host !== host);
-      if (left.length === (value.hosts ?? []).length) throw notFound(`${host} isn't always allowed`);
+    return updateJson(this.#allowedFile, noHosts, (value) => {
+      const left = value.hosts.filter((h) => h.host !== host);
+      if (left.length === value.hosts.length) throw notFound(`${host} isn't always allowed`);
       value.hosts = left;
       return left;
     });

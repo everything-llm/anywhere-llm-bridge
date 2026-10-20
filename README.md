@@ -37,7 +37,7 @@ It listens on `BRIDGE_PORT` (8467), on 127.0.0.1.
 | `GET /allowed` | `{"hosts": [{host, added}]}`, the hosts always allowed |
 | `DELETE /allowed/<host>` | `{"hosts"}` left; 404 when it isn't one |
 
-They take only the developer key named `AnywhereLLM`, the one `pair` hands out, which the bridge looks up in AnythingLLM's key list (cached as the key check is). Any other key AnythingLLM accepts gets 403, so a key the agent holds can't answer its own ask. An id is 32 hex digits and a host a bare name or address; anything else is a 400. The bridge writes under the same lock folders as the suite's `updateJson` (`<file>.lock`), so the two never write over each other.
+They take only the developer key named `AnywhereLLM`, the one `pair` hands out, which the bridge looks up in AnythingLLM's key list (cached as the key check is): a key not in the list gets 401, and any other key in it 403, so a key the agent holds can't answer its own ask. An id is 32 hex digits and a host a bare name or address; anything else is a 400. The bridge writes under the same lock folders as the suite's `updateJson` (`<file>.lock`), so the two never write over each other.
 
 **Why a list.** The bridge holds AnythingLLM's password, so anyone with a developer key could do what the settings pages do, down to reading the key list or rewriting `.env` through `system/update-env`, unless the bridge says no. List what a client needs and no more.
 

@@ -47,7 +47,7 @@ function serial<T>(key: string, fn: () => Promise<T>): Promise<T> {
  *  way (its `shared/atomic.mts`), so the two never write over each other. A lock older than
  *  LOCK_STALE_MS is one a process left behind when it died, and is broken. `what` names what's
  *  locked in the 503 said when it stays busy. */
-export function locked<T>(lock: string, what: string, fn: () => T | Promise<T>): Promise<T> {
+function locked<T>(lock: string, what: string, fn: () => T | Promise<T>): Promise<T> {
   return serial(`lock:${lock}`, async () => {
     fs.mkdirSync(path.dirname(lock), { recursive: true });
     const until = Date.now() + LOCK_WAIT_MS;
@@ -86,7 +86,7 @@ export function readJson<S>(file: string, fresh: () => S): S {
 }
 
 /** Writes `value` to the JSON file `file` as the suite does: indented, readable by its owner only. */
-export const writeJson = (file: string, value: unknown): void => writeAtomic(file, JSON.stringify(value, null, 2) + "\n", 0o600);
+const writeJson = (file: string, value: unknown): void => writeAtomic(file, JSON.stringify(value, null, 2) + "\n", 0o600);
 
 /** Changes the JSON file `file` under its lock (`file`.lock): `change` gets what it holds now (or
  *  `fresh` when there's none) and changes it in place; what it answers is answered. */

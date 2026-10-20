@@ -132,13 +132,15 @@ test("an ask answered already or expired is a 409, and one that's gone a 404", a
 
 test("a bad id, host, decision or method is refused before any file is touched", async () => {
   writeAsk();
-  for (const route of ["/asks/..%2Fallowed", "/asks/ABCDEF0123456789abcdef0123456789", "/asks/123"]) {
+  for (const route of ["/asks/ABCDEF0123456789abcdef0123456789", "/asks/123"]) {
     const res = await call("GET", route);
     assert.equal(res.status, 400, route);
   }
   assert.equal((await call("POST", `/asks/${ID}`, { decision: "maybe" })).status, 400);
   assert.equal((await call("POST", `/asks/${ID}`)).status, 400);
-  assert.equal((await call("DELETE", "/allowed/a%2Fb")).status, 400);
+  // An encoded `/` is a separator, as on the routes passed on: these have a segment too many.
+  assert.equal((await call("GET", "/asks/..%2Fallowed")).status, 404);
+  assert.equal((await call("DELETE", "/allowed/a%2Fb")).status, 404);
   assert.equal((await call("DELETE", `/asks/${ID}`)).status, 405);
   assert.equal((await call("POST", "/allowed")).status, 405);
   assert.equal((await call("GET", `/asks/${ID}/more`)).status, 404);
