@@ -13,7 +13,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
+import { sameText } from "../atomic.mts";
 import { invalid } from "../errors.mts";
+import { INNER_STORAGE } from "../paths.mts";
 import { DEFAULT_ROLES, ROLES_ENV } from "./settings.mts";
 
 export type Runtime = "container" | "native";
@@ -24,8 +26,6 @@ export const NAME = "control";
 /** The folder in the storage that holds the bridge's files, and the server's name in it. */
 const DIR = "anywherellm-bridge";
 const FILE = "control.cjs";
-/** Where AnythingLLM's image keeps its storage, which Docker users bind-mount. */
-export const INNER_STORAGE = "/app/server/storage";
 
 export const serversFile = (storage: string): string => path.join(storage, "plugins", "anythingllm_mcp_servers.json");
 const controlFile = (storage: string): string => path.join(storage, DIR, FILE);
@@ -60,8 +60,6 @@ function writable<T>(file: string, operation: () => T): T {
     );
   }
 }
-
-const sameText = (file: string, text: string): boolean => fs.existsSync(file) && fs.readFileSync(file, "utf8") === text;
 
 /** Whether `file` holds `text`, or for JSON the same value however it's laid out (AnythingLLM
  *  writes the servers file again when a setting changes). */

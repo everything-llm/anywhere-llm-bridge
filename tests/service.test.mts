@@ -54,6 +54,7 @@ const ctxWith = (run: Run, platform: NodeJS.Platform = "linux", env: Record<stri
   print: (l) => printed.push(l),
   command: ["/usr/bin/node", "/opt/my apps/anywherellm-bridge.cjs", "serve"],
   defaultAllow: "/workspaces",
+  controlSource: "",
   run,
   uid: 501,
   startWait: 1,

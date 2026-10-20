@@ -16,13 +16,13 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { readEnv, saveEnv } from "./envfile.mts";
 import { invalid } from "./errors.mts";
 import * as control from "./control/install.mts";
-import { DEFAULT_ROLES, ROLES } from "./control/settings.mts";
-import { desktopStorage, expandHome, samePath, type Place } from "./paths.mts";
+import type { Check } from "./control/install.mts";
+import { DEFAULT_ROLES, parseRoles } from "./control/settings.mts";
+import { desktopStorage, expandHome, INNER_STORAGE, samePath, type Place } from "./paths.mts";
 import { choose, foreground, managerOf, parseKind, run, type Host, type Manager, type Run } from "./service/index.mts";
 import { fileFor, loadSettings, shown, type Settings } from "./settings.mts";
 import { request, Upstream } from "./upstream.mts";
 
-const INNER_STORAGE = control.INNER_STORAGE;
 
 /** This machine: its home, environment and OS (a test may say another), and what install needs. */
 export interface Ctx extends Place {
@@ -32,9 +32,7 @@ export interface Ctx extends Place {
   /** What BRIDGE_ALLOW is set to when it is unset (default-allow.txt). */
   defaultAllow: string;
   /** The control server's file, as `install --control` writes it (build.mjs inlines it). */
-  controlSource?: string;
-  /** The node that runs the control server for a native AnythingLLM: the one running this. */
-  node?: string;
+  controlSource: string;
   /** The service manager's commands; the real ones unless a test gives its own. */
   run?: Run;
   /** The user's id (launchd's GUI domain); this process's unless a test gives its own. */
@@ -51,7 +49,8 @@ export interface Options {
   /** Put the control server into the storage too. */
   control?: boolean;
   runtime?: control.Runtime;
-  roles?: string[];
+  /** Comma-separated, as --roles gives them. */
+  roles?: string;
 }
 
 const hostOf = (ctx: Ctx): Host => ({ ...ctx, run: ctx.run ?? run, uid: ctx.uid ?? process.getuid?.() ?? 0 });
@@ -91,14 +90,12 @@ const RUNTIMES: control.Runtime[] = ["container", "native"];
  *  and the chat role. */
 function putControl(ctx: Ctx, storage: string, opts: Options): void {
   if (opts.runtime && !RUNTIMES.includes(opts.runtime)) throw invalid(`--runtime is container or native, not ${opts.runtime}`);
-  const unknown = (opts.roles ?? []).filter((r) => !ROLES.includes(r));
-  if (unknown.length || opts.roles?.length === 0) throw invalid(`--roles is one or more of ${ROLES.join(", ")}${unknown.length ? `, not ${unknown.join(", ")}` : ""}`);
-  if (!ctx.controlSource || !ctx.node) throw invalid("this build carries no control server");
+  const named = opts.roles === undefined ? undefined : parseRoles(opts.roles, "--roles");
   const was = control.current(storage);
   const runtime = opts.runtime ?? was?.runtime ?? (samePath(ctx.platform, storage, desktopStorage(ctx)) ? "native" : "container");
-  const roles = opts.roles ?? was?.roles ?? DEFAULT_ROLES;
+  const roles = named ?? was?.roles ?? DEFAULT_ROLES;
   ctx.print(`The control server: ${runtime === "container" ? `a container's, seen there as ${INNER_STORAGE}` : "AnythingLLM runs on this machine"}; roles ${roles.join(", ")}`);
-  for (const line of control.put(storage, ctx.controlSource, control.entry(runtime, storage, roles, ctx.node))) ctx.print(line);
+  for (const line of control.put(storage, ctx.controlSource, control.entry(runtime, storage, roles, ctx.command[0]))) ctx.print(line);
 }
 
 export async function install(ctx: Ctx, opts: Options): Promise<void> {
@@ -150,15 +147,13 @@ function leftForYou(ctx: Ctx, settings: Settings, file: string, withControl: boo
 
 export function uninstall(ctx: Ctx): void {
   const settings = loadSettings(ctx);
-  if (settings.storage && control.installed(settings.storage)) for (const line of control.take(settings.storage)) ctx.print(line);
+  if (settings.storage) for (const line of control.take(settings.storage)) ctx.print(line);
   const manager = definedIn(ctx, settings);
   if (!manager) ctx.print("No service of the bridge's is defined: stop `anywherellm-bridge serve` where you run it.");
   else if (manager.stop()) ctx.print("Stopped the bridge.");
   else ctx.print(`${manager.label} would not stop: stop the bridge yourself.`);
   ctx.print(`Its settings stay in ${fileFor(ctx)}.`);
 }
-
-type Check = [what: string, ok: boolean, detail: string];
 
 /** Every health check; false when one failed. */
 export async function health(ctx: Ctx): Promise<boolean> {
@@ -176,7 +171,7 @@ export async function health(ctx: Ctx): Promise<boolean> {
     loginCheck(settings),
     settings.publicUrl ? statusOf(`${settings.publicUrl}/health`).then((status) => probe(`${settings.publicUrl}/health`, status)) : (["route", true, "PUBLIC_URL and PUBLIC_HOST unset: the bridge answers on this machine only"] as Check),
   ]);
-  if (settings.storage && ctx.controlSource && control.installed(settings.storage)) found.push(...control.checks(settings.storage, ctx.controlSource));
+  if (settings.storage && control.installed(settings.storage)) found.push(...control.checks(settings.storage, ctx.controlSource));
   found.push(probe(`bridge on :${settings.port}`, bridge), probe("AnythingLLM", ping, `${settings.anythingllmUrl}: `), login);
   found.push(["BRIDGE_ALLOW", settings.allow.length > 0, shown(settings).BRIDGE_ALLOW || "empty: the bridge passes nothing"], route);
   for (const [what, ok, detail] of found) ctx.print(`${ok ? "ok  " : "FAIL"} ${what}${detail ? `: ${detail}` : ""}`);

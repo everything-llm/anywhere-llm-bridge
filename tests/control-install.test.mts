@@ -120,25 +120,24 @@ function machine() {
     home,
     env: { BRIDGE_PORT: "1" },
     print: (l) => printed.push(l),
-    command: ["/usr/bin/node", "/x/anywherellm-bridge.cjs", "serve"],
+    command: ["/opt/node/bin/node", "/x/anywherellm-bridge.cjs", "serve"],
     defaultAllow: "/workspaces",
     platform: "linux",
     run: () => ({ status: 1, stdout: "" }),
     controlSource: SOURCE,
-    node: "/opt/node/bin/node",
   };
   return { ctx, dir, printed };
 }
 
 test("install --control puts the server in without starting the bridge; a reinstall keeps its runtime and roles, and --roles changes them", async () => {
   const { ctx, dir, printed } = machine();
-  await install(ctx, { storage: dir, start: false, control: true, roles: ["chat", "schedule"] });
+  await install(ctx, { storage: dir, start: false, control: true, roles: "chat,schedule" });
   assert.deepEqual(servers(dir).control.env, { ANYTHINGLLM_MCP_ROLES: "chat,schedule" });
   assert.equal(servers(dir).control.command, "node", "a storage that isn't Desktop's is a container's");
   assert.match(printed.join("\n"), /refresh the MCP servers/);
   await install(ctx, { storage: dir, start: false, control: true });
   assert.deepEqual(servers(dir).control.env, { ANYTHINGLLM_MCP_ROLES: "chat,schedule" });
-  await install(ctx, { storage: dir, start: false, control: true, runtime: "native", roles: ["chat"] });
+  await install(ctx, { storage: dir, start: false, control: true, runtime: "native", roles: "chat" });
   assert.deepEqual(servers(dir).control, { command: "/opt/node/bin/node", args: [path.join(dir, "anywherellm-bridge", "control.cjs")], env: { ANYTHINGLLM_MCP_ROLES: "chat" } });
 });
 
@@ -146,7 +145,7 @@ test("install without --control leaves a control server alone; a bad role or run
   const { ctx, dir } = machine();
   await install(ctx, { storage: dir, start: false });
   assert.ok(!installed(dir));
-  await assert.rejects(install(ctx, { storage: dir, start: false, control: true, roles: ["admin"] }), /--roles is one or more of chat, schedule, not admin/);
+  await assert.rejects(install(ctx, { storage: dir, start: false, control: true, roles: "admin" }), /--roles is one or more of chat, schedule; got \["admin"\]/);
   await assert.rejects(install(ctx, { storage: dir, start: false, control: true, runtime: "vm" as never }), /--runtime is container or native/);
   assert.ok(!fs.existsSync(path.join(dir, "anywherellm-bridge")));
 });

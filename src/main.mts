@@ -44,7 +44,6 @@ const ctx: Ctx = {
   command: [process.execPath, fs.realpathSync(process.argv[1]), "serve"],
   defaultAllow: defaultList(defaultAllow),
   controlSource: CONTROL_SOURCE,
-  node: process.execPath,
 };
 
 const OPTIONS: Record<string, ParseArgsConfig["options"]> = {
@@ -76,7 +75,7 @@ async function main(argv: string[]): Promise<number | void> {
         service: text("service"),
         control: values.control === true,
         runtime: text("runtime") as Runtime | undefined,
-        roles: text("roles")?.split(",").map((s) => s.trim()).filter(Boolean),
+        roles: text("roles"),
       });
       return 0;
     case "uninstall":

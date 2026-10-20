@@ -51,6 +51,7 @@ export async function request(url: string, { method = "GET", body, token = "", t
   let res: Response;
   let text: string;
   try {
+    // AbortSignal.any is Node 20.3; control.cjs runs on the image's Node 18 and passes no signal, so never gets here
     const limit = signal ? AbortSignal.any([AbortSignal.timeout(timeout), signal]) : AbortSignal.timeout(timeout);
     res = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal: limit });
     text = await res.text();

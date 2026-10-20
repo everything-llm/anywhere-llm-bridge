@@ -33,6 +33,7 @@ beforeEach(async () => {
     print: (l) => printed.push(l),
     command: ["/usr/bin/node", "/x/anywherellm-bridge.cjs", "serve"],
     defaultAllow: DEFAULT,
+    controlSource: "",
     platform: "linux", // paths and service manager as on Linux, whatever runs the tests
     run: () => ({ status: 1, stdout: "" }), // no service manager answers
   };
