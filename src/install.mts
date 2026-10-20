@@ -40,6 +40,9 @@ export interface Ctx extends Place {
   uid?: number;
   /** How many seconds a started bridge has to answer (60). */
   startWait?: number;
+  /** How many seconds health waits for an AnythingLLM that answers nothing yet, as one just
+   *  restarted does (30). */
+  upWait?: number;
 }
 
 export interface Options {
@@ -165,15 +168,23 @@ export async function health(ctx: Ctx): Promise<boolean> {
     const state = manager.status();
     found.push([manager.label, state === "active", state]);
   }
-  const probe = (what: string, status: number, detail = ""): Check => [what, status === 200, `${detail}${status || "no answer"}`];
-  const [bridge, ping, login, route] = await Promise.all([
+  const probe = (what: string, status: number, detail = "", none = "no answer"): Check => [what, status === 200, `${detail}${status || none}`];
+  // An AnythingLLM restarted a moment ago answers nothing for a few seconds: wait for it, saying
+  // so, before it and its login are checked, rather than report it down.
+  const pingUrl = `${settings.anythingllmUrl}/api/ping`;
+  const upWait = ctx.upWait ?? 30;
+  let ping = await statusOf(pingUrl);
+  if (!ping) {
+    ctx.print(`AnythingLLM isn't answering yet: waiting up to ${upWait} s for it to start`);
+    if (await waitFor(pingUrl, upWait)) ping = 200;
+  }
+  const [bridge, login, route] = await Promise.all([
     statusOf(`http://127.0.0.1:${settings.port}/health`),
-    statusOf(`${settings.anythingllmUrl}/api/ping`),
     loginCheck(settings),
     settings.publicUrl ? statusOf(`${settings.publicUrl}/health`).then((status) => probe(`${settings.publicUrl}/health`, status)) : (["route", true, "PUBLIC_URL and PUBLIC_HOST unset: the bridge answers on this machine only"] as Check),
   ]);
   if (settings.storage && control.installed(settings.storage)) found.push(...control.checks(settings.storage, ctx.controlSource));
-  found.push(probe(`bridge on :${settings.port}`, bridge), probe("AnythingLLM", ping, `${settings.anythingllmUrl}: `), login);
+  found.push(probe(`bridge on :${settings.port}`, bridge), probe("AnythingLLM", ping, `${settings.anythingllmUrl}: `, `no answer in ${upWait} s`), login);
   found.push(["BRIDGE_ALLOW", settings.allow.length > 0, shown(settings).BRIDGE_ALLOW || "empty: the bridge passes nothing"], route);
   for (const [what, ok, detail] of found) ctx.print(`${ok ? "ok  " : "FAIL"} ${what}${detail ? `: ${detail}` : ""}`);
   return found.every(([, ok]) => ok);

@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { readEnv } from "../src/envfile.mts";
@@ -95,6 +97,35 @@ test("health fails when the bridge isn't answering, and says which check", async
   assert.match(report, /ok +AnythingLLM/);
   assert.match(report, /ok +the internal API's login/);
   assert.match(report, /ok +BRIDGE_ALLOW/);
+});
+
+test("health waits for an AnythingLLM that isn't answering yet, and fails only when it never does", async () => {
+  await install(ctx, opts());
+  const port = await new Promise<number>((done) => {
+    const probe = http.createServer().listen(0, "127.0.0.1", () => {
+      const { port } = probe.address() as AddressInfo;
+      probe.close(() => done(port));
+    });
+  });
+  ctx.env.ANYTHINGLLM_URL = `http://127.0.0.1:${port}`;
+  ctx.upWait = 1;
+  printed.length = 0;
+  assert.equal(await health(ctx), false);
+  assert.match(printed.join("\n"), /AnythingLLM isn't answering yet: waiting up to 1 s/);
+  assert.match(printed.join("\n"), /FAIL AnythingLLM: http:\/\/127\.0\.0\.1:\d+: no answer in 1 s/);
+
+  ctx.upWait = 10;
+  printed.length = 0;
+  const late = http.createServer((req, res) => res.writeHead(req.url === "/api/ping" ? 200 : 404).end());
+  const starting = setTimeout(() => late.listen(port, "127.0.0.1"), 700);
+  try {
+    await health(ctx);
+    assert.match(printed.join("\n"), /AnythingLLM isn't answering yet/);
+    assert.match(printed.join("\n"), /ok +AnythingLLM: http:\/\/127\.0\.0\.1:\d+: 200/);
+  } finally {
+    clearTimeout(starting);
+    late.close();
+  }
 });
 
 test("the named developer key is reused, and made when there is none", async () => {
