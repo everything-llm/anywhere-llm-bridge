@@ -16,13 +16,14 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { readEnv, saveEnv } from "./envfile.mts";
 import { invalid } from "./errors.mts";
 import * as control from "./control/install.mts";
-import type { Check } from "./control/install.mts";
 import { DEFAULT_ROLES, parseRoles } from "./control/settings.mts";
 import { desktopStorage, expandHome, INNER_STORAGE, samePath, type Place } from "./paths.mts";
 import { choose, foreground, managerOf, parseKind, run, type Host, type Manager, type Run } from "./service/index.mts";
 import { fileFor, loadSettings, shown, type Settings } from "./settings.mts";
 import { request, Upstream } from "./upstream.mts";
 
+/** One line of `health`: what was checked, whether it holds, and what to say about it. */
+export type Check = [what: string, ok: boolean, detail: string];
 
 /** This machine: its home, environment and OS (a test may say another), and what install needs. */
 export interface Ctx extends Place {

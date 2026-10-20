@@ -7,6 +7,7 @@ import { ControlError, type Anything } from "./anything.mts";
 import { CHAT_NAME_MAX, Chats, HISTORY } from "./chats.mts";
 import { JOB_NAME_MAX, Jobs, MAX_PROMPT } from "./jobs.mts";
 import type { Schema, Server, Tool } from "./mcp.mts";
+import { ROLES, type Role } from "./settings.mts";
 
 const CHAT = `Chats: list them, read one, start one, rename one, clear one's messages and delete one. A chat
 belongs to a workspace; both are named by their slug.
@@ -139,18 +140,18 @@ function scheduleTool(jobs: Jobs): Tool {
 }
 
 /** Each role's instructions and tools. */
-const ROLE: Record<string, [instructions: string, tools: (api: Anything) => Tool[]]> = {
+const ROLE: Record<Role, [instructions: string, tools: (api: Anything) => Tool[]]> = {
   chat: [CHAT, (api) => chatTools(new Chats(api))],
   schedule: [SCHEDULE, (api) => [scheduleTool(new Jobs(api))]],
 };
 
 /** The server for `roles` (settings.mts has checked them), calling AnythingLLM through `api`. */
 export function buildServer(api: Anything, roles: readonly string[], version: string): Server {
-  const asked = Object.entries(ROLE).filter(([role]) => roles.includes(role));
+  const asked = ROLES.filter((role) => roles.includes(role)).map((role) => ROLE[role]);
   return {
     name: "anythingllm",
     version,
-    instructions: `Controls of the user's AnythingLLM.\n\n${asked.map(([, [text]]) => text).join("\n")}`,
-    tools: asked.flatMap(([, [, tools]]) => tools(api)),
+    instructions: `Controls of the user's AnythingLLM.\n\n${asked.map(([text]) => text).join("\n")}`,
+    tools: asked.flatMap(([, tools]) => tools(api)),
   };
 }

@@ -15,12 +15,12 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { sameText } from "../atomic.mts";
 import { invalid } from "../errors.mts";
+import type { Check } from "../install.mts";
 import { INNER_STORAGE } from "../paths.mts";
+import type { Obj } from "./anything.mts";
 import { DEFAULT_ROLES, ROLES_ENV } from "./settings.mts";
 
 export type Runtime = "container" | "native";
-export type Check = [what: string, ok: boolean, detail: string];
-type Obj = Record<string, unknown>;
 
 export const NAME = "control";
 /** The folder in the storage that holds the bridge's files, and the server's name in it. */
@@ -37,7 +37,7 @@ export function entry(runtime: Runtime, storage: string, roles: string[], node: 
 }
 
 /** What an entry `entry` wrote says, the runtime and the roles; null for an entry that isn't ours. */
-export function parseEntry(found: unknown): { runtime: Runtime; roles: string[] } | null {
+function parseEntry(found: unknown): { runtime: Runtime; roles: string[] } | null {
   const { command, args, env } = (found ?? {}) as Obj;
   const words = Array.isArray(args) ? args.map(String) : [];
   const file = (words.at(-1) ?? "").replace(/\\/g, "/");
@@ -148,7 +148,8 @@ export function checks(storage: string, source: string): Check[] {
   let listed: Check;
   try {
     const found = serversIn(readServers(serversFile(storage)))[NAME];
-    listed = [`the ${NAME} entry`, found !== undefined && ours(found), found === undefined ? `missing from ${serversFile(storage)}` : ours(found) ? "" : "another server has its name"];
+    const mine = ours(found);
+    listed = [`the ${NAME} entry`, mine, found === undefined ? `missing from ${serversFile(storage)}` : mine ? "" : "another server has its name"];
   } catch (e) {
     listed = [`the ${NAME} entry`, false, (e as Error).message];
   }

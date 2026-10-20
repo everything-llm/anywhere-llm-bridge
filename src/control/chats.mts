@@ -7,10 +7,10 @@ import { bounded, ControlError, items, obj, slug, text, type Anything, type Obj 
 export const CHAT_NAME_MAX = 100;
 export const SHOWN = 600; // characters of a message in a history
 export const HISTORY = 10; // exchanges a history shows unless it is asked for more
-export const HISTORY_MAX = 50;
+const HISTORY_MAX = 50;
 
 /** A question and its answer, which AnythingLLM numbers together as one `chatId`. */
-export interface Exchange {
+export interface Turn {
   chatId: number;
   question: string;
   answer: string;
@@ -18,7 +18,7 @@ export interface Exchange {
 
 /** The exchanges in a thread's `history`, oldest first: it lists a user message and an assistant
  *  message for each, both with the exchange's `chatId`. */
-export function exchangesOf(history: unknown): Exchange[] {
+export function exchangesOf(history: unknown): Turn[] {
   const found = new Map<number, Record<string, string>>();
   for (const entry of items(history).map(obj)) {
     const id = entry.chatId;
@@ -98,7 +98,7 @@ export class Chats {
   }
 
   /** What a change is shown as, and the chat's exchanges, oldest first. */
-  async #summary(workspace: string, chat: string): Promise<[Obj, Exchange[]]> {
+  async #summary(workspace: string, chat: string): Promise<[Obj, Turn[]]> {
     const thread = await this.#thread(workspace, chat);
     const found = await this.#history(workspace, chat);
     return [{ chat, name: text(thread.name), exchanges: found.length }, found];
@@ -111,7 +111,7 @@ export class Chats {
     return thread;
   }
 
-  async #history(workspace: string, chat: string): Promise<Exchange[]> {
+  async #history(workspace: string, chat: string): Promise<Turn[]> {
     return exchangesOf(obj(await this.#api.call("GET", `${pathOf(workspace, chat)}/chats`)).history);
   }
 }

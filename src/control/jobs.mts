@@ -3,6 +3,7 @@
 // `apply`. AnythingLLM takes no idempotency key and allows two jobs alike, so an add that finds an
 // identical job refuses, which makes a retried add safe.
 
+import { isDeepStrictEqual } from "node:util";
 import { bounded, ControlError, items, obj, text, type Anything, type Obj } from "./anything.mts";
 
 export const JOB_NAME_MAX = 100;
@@ -23,7 +24,7 @@ export interface JobSpec {
 }
 
 /** The fields of a job to change; one left out stays as it is. */
-export interface JobEdit {
+interface JobEdit {
   name?: string;
   prompt?: string;
   schedule?: string;
@@ -31,7 +32,7 @@ export interface JobEdit {
   enabled?: boolean;
 }
 
-const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+const same = isDeepStrictEqual;
 
 /** `value` when it can be a scheduled job's id. */
 function jobId(value: number): number {

@@ -70,7 +70,7 @@ function misfit(value: unknown, schema: Schema, name: string): string | null {
 }
 
 /** Why `args` don't fit a tool's input schema, or null when they do. Arguments it doesn't name are ignored. */
-export function argsMisfit(args: Record<string, unknown>, schema: Tool["inputSchema"]): string | null {
+function argsMisfit(args: Record<string, unknown>, schema: Tool["inputSchema"]): string | null {
   for (const name of schema.required ?? []) if (args[name] === undefined || args[name] === null) return `${name} is required`;
   for (const [name, value] of Object.entries(args)) {
     const property = schema.properties[name];
@@ -98,15 +98,14 @@ async function callTool(tool: Tool, params: Record<string, unknown>, log: (line:
 
 /** The answer to one message, or null for a notification (no id), which gets none. */
 export async function handle(server: Server, message: Message, log: (line: string) => void = () => {}): Promise<Reply | null> {
-  const id = message && typeof message === "object" ? (message.id ?? null) : null;
+  const sent = message && typeof message === "object" ? message : null;
+  const id = sent?.id ?? null;
   const fail = (code: number, text: string): Reply => ({ jsonrpc: "2.0", id, error: { code, message: text } });
-  if (!message || typeof message !== "object" || typeof message.method !== "string") {
-    return message && typeof message === "object" && message.id === undefined ? null : fail(INVALID_REQUEST, "not a JSON-RPC request");
-  }
-  if (message.id === undefined) return null;
-  const params = message.params ?? {};
+  if (!sent || typeof sent.method !== "string") return sent && sent.id === undefined ? null : fail(INVALID_REQUEST, "not a JSON-RPC request");
+  if (sent.id === undefined) return null;
+  const params = sent.params ?? {};
   const ok = (value: unknown): Reply => ({ jsonrpc: "2.0", id, result: value });
-  switch (message.method) {
+  switch (sent.method) {
     case "initialize": {
       const asked = String(params.protocolVersion ?? "");
       return ok({
@@ -125,7 +124,7 @@ export async function handle(server: Server, message: Message, log: (line: strin
       return tool ? ok(await callTool(tool, params, log)) : fail(INVALID_PARAMS, `no tool ${JSON.stringify(params.name)}`);
     }
     default:
-      return fail(NO_METHOD, `no method ${message.method}`);
+      return fail(NO_METHOD, `no method ${sent.method}`);
   }
 }
 

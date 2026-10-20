@@ -4,9 +4,9 @@
 // login, for the stdio test.
 
 import http from "node:http";
-import type { AddressInfo } from "node:net";
 import consumers from "node:stream/consumers";
 import { Anything, items, obj, text, type Obj } from "../../src/control/anything.mts";
+import { close, listen } from "./net.mts";
 
 type Reply = { status: number; json: unknown };
 const NOT_FOUND: Reply = { status: 404, json: null };
@@ -156,7 +156,6 @@ export async function serve(fake: FakeAnythingLLM, password: string, seen: strin
     if (req.headers.authorization !== "Bearer tok") return send({ status: 401, json: { error: "Invalid auth token" } });
     send(fake.answer(req.method ?? "", (req.url ?? "").replace(/^\/api/, ""), body));
   });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const { port } = server.address() as AddressInfo;
-  return { url: `http://127.0.0.1:${port}`, close: () => new Promise((resolve) => server.close(() => resolve())) };
+  const port = await listen(server);
+  return { url: `http://127.0.0.1:${port}`, close: () => close(server) };
 }

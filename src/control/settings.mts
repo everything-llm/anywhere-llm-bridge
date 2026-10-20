@@ -11,13 +11,15 @@ import { ANYTHINGLLM_PORT } from "../upstream.mts";
 
 /** The roles a server can be given, those it has without being asked, and the variable that names them
  *  (`install --control --roles` writes it into the entry). */
-export const ROLES = ["chat", "schedule"];
+export const ROLES = ["chat", "schedule"] as const;
+export type Role = (typeof ROLES)[number];
 export const DEFAULT_ROLES = ["chat"];
 export const ROLES_ENV = "ANYTHINGLLM_MCP_ROLES";
 
 /** AnythingLLM's address: ANYTHINGLLM_URL, else this machine at its own SERVER_PORT, else 3001. */
 const anythingllmUrl = (env: Env): string =>
   (env.ANYTHINGLLM_URL || `http://127.0.0.1:${env.SERVER_PORT || ANYTHINGLLM_PORT}`).replace(/\/+$/, "");
+
 export interface Settings {
   url: string;
   roles: string[];
@@ -27,7 +29,7 @@ export interface Settings {
 export function parseRoles(text: string, what: string): string[] {
   const asked = text.split(",").map((r) => r.trim());
   const roles = [...new Set(asked.filter(Boolean))];
-  if (!roles.length || !roles.every((r) => ROLES.includes(r))) throw new Error(`${what} is one or more of ${ROLES.join(", ")}; got ${JSON.stringify(asked)}`);
+  if (!roles.length || !roles.every((r) => ROLES.includes(r as Role))) throw new Error(`${what} is one or more of ${ROLES.join(", ")}; got ${JSON.stringify(asked)}`);
   return roles;
 }
 

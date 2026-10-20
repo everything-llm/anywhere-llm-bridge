@@ -50,15 +50,22 @@ export async function request(url: string, { method = "GET", body, token = "", t
   if (body !== undefined) headers["Content-Type"] = "application/json";
   let res: Response;
   let text: string;
+  // One controller for the timeout and the caller's signal (AbortSignal.any is Node 20.3; control.cjs runs on the image's Node 18)
+  const stop = new AbortController();
+  const timer = setTimeout(() => stop.abort(), timeout);
+  const leave = () => stop.abort(signal?.reason);
+  if (signal?.aborted) leave();
+  signal?.addEventListener("abort", leave, { once: true });
   try {
-    // AbortSignal.any is Node 20.3; control.cjs runs on the image's Node 18 and passes no signal, so never gets here
-    const limit = signal ? AbortSignal.any([AbortSignal.timeout(timeout), signal]) : AbortSignal.timeout(timeout);
-    res = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal: limit });
+    res = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal: stop.signal });
     text = await res.text();
   } catch (e) {
     if (signal?.aborted) throw e;
-    if ((e as Error).name === "TimeoutError") throw upstreamError(`AnythingLLM didn't answer within ${Math.round(timeout / 1000)} s`);
+    if (stop.signal.aborted) throw upstreamError(`AnythingLLM didn't answer within ${Math.round(timeout / 1000)} s`);
     throw upstreamError(`AnythingLLM can't be reached: ${((e as Error).cause as Error | undefined)?.message ?? (e as Error).message}`);
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", leave);
   }
   try {
     return { status: res.status, json: text.trim() ? JSON.parse(text) : null };
