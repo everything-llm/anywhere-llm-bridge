@@ -44,7 +44,8 @@ test("health passes for what install set up", run, () => {
 type Result = { content: { text: string }[]; isError?: boolean };
 
 /** The control server in the container, as an MCP client: `call` sends a tool call and gives back
- *  (is_error, what the agent reads, as JSON when it is). `extra` adds to the container's environment. */
+ *  (is_error, what the agent reads, as JSON when it is); `applied` shows a change, then makes it. `extra`
+ *  adds to the container's environment. */
 async function control(roles: string, extra: Record<string, string> = {}) {
   const flags = Object.entries({ ANYTHINGLLM_MCP_ROLES: roles, ...extra }).flatMap(([k, v]) => ["-e", `${k}=${v}`]);
   const child = spawn(env("E2E_ENGINE"), ["exec", "-i", ...flags, env("E2E_CONTAINER"), "node", env("E2E_CONTROL")], { stdio: ["pipe", "pipe", "inherit"] });
@@ -58,11 +59,17 @@ async function control(roles: string, extra: Record<string, string> = {}) {
   };
   await ask("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "e2e", version: "1" } });
   child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`);
+  const call = async (name: string, args: Record<string, unknown> = {}): Promise<[boolean, any]> => {
+    const result = (await ask("tools/call", { name, arguments: args })) as Result;
+    const text = result.content.map((c) => c.text).join("");
+    return [result.isError === true, result.isError ? { why: text } : JSON.parse(text)];
+  };
   return {
-    async call(name: string, args: Record<string, unknown> = {}): Promise<[boolean, any]> {
-      const result = (await ask("tools/call", { name, arguments: args })) as Result;
-      const text = result.content.map((c) => c.text).join("");
-      return [result.isError === true, result.isError ? { why: text } : JSON.parse(text)];
+    call,
+    /** The change shown, then made with the confirm it gave. */
+    async applied(name: string, args: Record<string, unknown>): Promise<[boolean, any]> {
+      const [isError, shown] = await call(name, args);
+      return isError ? [isError, shown] : call(name, { ...args, apply: true, confirm: shown.confirm });
     },
     close: () => {
       child.stdin.end();
@@ -100,12 +107,13 @@ test("a chat is found, started, renamed and deleted in the real AnythingLLM", ru
     assert.deepEqual((await c.call("chat_rename", { ...chat, name: "Lisbon trip" }))[1], { chat: made.chat, name: "Lisbon trip" });
     const [, history] = await c.call("chat_history", chat);
     assert.deepEqual([history.name, history.exchanges, history.shown], ["Lisbon trip", 0, []]);
-    const [, cleared] = await c.call("chat_clear", { ...chat, apply: true });
+    const [, cleared] = await c.applied("chat_clear", chat);
     assert.equal(cleared.applied, false);
     assert.match(cleared.note, /already empty/);
-    assert.equal((await c.call("chat_delete", chat))[1].applied, false);
+    const [, shown] = await c.call("chat_delete", chat);
+    assert.equal(shown.applied, false);
     assert.ok((await listed()).includes(made.chat));
-    assert.equal((await c.call("chat_delete", { ...chat, apply: true }))[1].deleted, true);
+    assert.equal((await c.call("chat_delete", { ...chat, apply: true, confirm: shown.confirm }))[1].deleted, true);
     assert.ok(!(await listed()).includes(made.chat));
     const [isError, why] = await c.call("chat_delete", chat);
     assert.ok(isError);
@@ -123,19 +131,20 @@ test("a job is added, changed and deleted in the real AnythingLLM", run, async (
     assert.equal(before.timezone, "UTC");
     assert.equal((await c.call("schedule", { action: "add", ...job }))[1].applied, false);
     assert.equal((await c.call("schedule", { action: "list" }))[1].jobs.length, before.jobs.length);
-    const [, added] = await c.call("schedule", { action: "add", ...job, apply: true });
+    const [, added] = await c.applied("schedule", { action: "add", ...job });
     const id = added.job.id;
     assert.equal(added.job.schedule, "0 7 * * 1");
-    const [again, why] = await c.call("schedule", { action: "add", ...job, apply: true });
+    const [again, why] = await c.call("schedule", { action: "add", ...job });
     assert.ok(again);
     assert.match(why.why, /identical job already exists/);
     const off = { action: "update", job: id, enabled: false };
-    assert.deepEqual((await c.call("schedule", off))[1].changes.enabled, { from: true, to: false });
-    assert.equal((await c.call("schedule", { ...off, apply: true }))[1].job.enabled, false);
-    const [late, lateWhy] = await c.call("schedule", { action: "update", job: id, cron: "99 7 * * *", apply: true });
+    const [, shown] = await c.call("schedule", off);
+    assert.deepEqual(shown.changes.enabled, { from: true, to: false });
+    assert.equal((await c.call("schedule", { ...off, apply: true, confirm: shown.confirm }))[1].job.enabled, false);
+    const [late, lateWhy] = await c.applied("schedule", { action: "update", job: id, cron: "99 7 * * *" });
     assert.ok(late);
     assert.match(lateWhy.why.toLowerCase(), /cron/);
-    assert.equal((await c.call("schedule", { action: "delete", job: id, apply: true }))[1].deleted, id);
+    assert.equal((await c.applied("schedule", { action: "delete", job: id }))[1].deleted, id);
     assert.ok(!(await c.call("schedule", { action: "list" }))[1].jobs.some((j: { id: number }) => j.id === id));
   } finally {
     c.close();
