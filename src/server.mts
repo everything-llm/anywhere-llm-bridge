@@ -2,25 +2,22 @@
 // such as AnywhereLLM Lite, with no login of its own.
 //
 //   GET /health            no key needed
-//   GET /asks/<id>         an ask of the fence's, and POST it {decision} to answer it (asks.mts)
-//   GET /allowed           the addresses always allowed, and DELETE /allowed?origin=<origin> to
-//                          take one off
+//   GET /pages             the paths of the suite's Library and Vault pages (pages.mts)
 //   <METHOD> /<path>       AnythingLLM's own `/api/<path>`, its status and JSON passed through,
 //                          for the routes BRIDGE_ALLOW lists (allow.mts); any other is 403
 //
 // Every route but /health needs a developer key AnythingLLM accepts (Authorization: Bearer <key>);
-// the asks and the allowed addresses take only the key named AnywhereLLM, the phones' own, so no other
-// key (an agent's) answers an ask. Any origin may call them, and a preflight needs no key. The
-// asks and the allowed addresses are there only when the bridge knows AnythingLLM's storage. The
-// bridge's own failures are `{"error": "..."}`: 400 a bad request, 401 no accepted key, 403 a route
-// not allowed, 404 no such ask or address, 409 an ask answered or expired, 502 AnythingLLM can't be
-// reached or refused the bridge's login, 503 a file another writer holds.
+// /pages takes only the key named AnywhereLLM, the phones' own, so no other key (an agent's) learns
+// where the pages are, and is there only when the bridge knows AnythingLLM's storage. Any origin may
+// call them, and a preflight needs no key. The bridge's own failures are `{"error": "..."}`: 400 a
+// bad request, 401 no accepted key, 403 a route not allowed, 405 another method, 413 a body too
+// large, 502 AnythingLLM can't be reached or refused the bridge's login.
 
 import http from "node:http";
 import { METHODS, route, show, type Rule } from "./allow.mts";
-import { checkDecision, type Asks } from "./asks.mts";
-import { BridgeError, forbidden, invalid, notAllowed, notFound, tooLarge, unauthorized } from "./errors.mts";
+import { BridgeError, forbidden, invalid, notAllowed, tooLarge, unauthorized } from "./errors.mts";
 import { KEY_NAME } from "./pair.mts";
+import { readPages } from "./pages.mts";
 import type { Upstream } from "./upstream.mts";
 
 const SERVICE = "anywherellm-bridge";
@@ -37,8 +34,8 @@ const CORS = {
 interface Deps {
   rules: Rule[];
   upstream: Upstream;
-  /** The fence's asks in AnythingLLM's storage; null when the bridge doesn't know the storage. */
-  asks?: Asks | null;
+  /** AnythingLLM's storage folder, where /pages reads; null when the bridge doesn't know it. */
+  storage?: string | null;
   /** One line per request: the method, the path (never the query or the key) and the status. */
   log: (line: string) => void;
 }
@@ -72,34 +69,7 @@ function send(res: http.ServerResponse, status: number, json: unknown): void {
   res.end(noBody ? undefined : JSON.stringify(json ?? null));
 }
 
-/** Whether `path` is one of the bridge's own routes rather than AnythingLLM's. */
-const isOwn = (path: string): boolean => path === "/allowed" || path === "/asks" || path.startsWith("/asks/");
-
-/** The `origin` parameter of a query, or a 400. */
-function originIn(query: string): string {
-  const origin = new URLSearchParams(query).get("origin");
-  if (!origin) throw invalid("name the address: ?origin=<scheme://host:port>");
-  return origin;
-}
-
-/** The answer to one of the bridge's own routes, `path` decoded and `query` as sent. */
-async function own(asks: Asks, method: string, path: string, query: string, body: () => Promise<unknown>): Promise<unknown> {
-  const [, kind, arg, ...more] = path.split("/");
-  if (more.length) throw notFound("no such route");
-  if (kind === "asks" && arg) {
-    if (method === "GET") return { ask: asks.get(arg) };
-    if (method === "POST") return { ask: await asks.decide(arg, checkDecision(((await body()) as { decision?: unknown } | undefined)?.decision)) };
-    throw notAllowed("an ask is read with GET and answered with POST");
-  }
-  if (kind === "allowed" && arg === undefined) {
-    if (method === "GET") return { origins: asks.allowed() };
-    if (method === "DELETE") return { origins: await asks.forget(originIn(query)) };
-    throw notAllowed("the allowed addresses are read with GET, and one taken off with DELETE");
-  }
-  throw notFound("no such route");
-}
-
-export function createServer({ rules, upstream, asks = null, log }: Deps): http.Server {
+export function createServer({ rules, upstream, storage = null, log }: Deps): http.Server {
   const allow = rules.map(show);
   async function handle(req: http.IncomingMessage, res: http.ServerResponse, gone: AbortSignal): Promise<void> {
     const method = req.method ?? "GET";
@@ -108,7 +78,7 @@ export function createServer({ rules, upstream, asks = null, log }: Deps): http.
     const rawPath = cut < 0 ? url : url.slice(0, cut);
     const query = cut < 0 ? "" : url.slice(cut + 1);
     if (method === "OPTIONS") return send(res, 204, null);
-    if (method === "GET" && rawPath === "/health") return send(res, 200, { ok: true, service: SERVICE, allow, asks: asks !== null });
+    if (method === "GET" && rawPath === "/health") return send(res, 200, { ok: true, service: SERVICE, allow, pages: storage !== null });
     let path: string;
     try {
       path = decodeURIComponent(rawPath); // as a router hands it on: an encoded `/` is a separator
@@ -116,11 +86,12 @@ export function createServer({ rules, upstream, asks = null, log }: Deps): http.
       throw invalid("bad path");
     }
     const key = keyOf(req);
-    if (asks && isOwn(path)) {
+    if (storage !== null && path === "/pages") {
       const name = await upstream.keyName(key);
       if (name === null) throw unauthorized("send a developer API key AnythingLLM accepts");
-      if (name !== KEY_NAME) throw forbidden(`only the developer key named ${KEY_NAME}, the one pair hands out, answers asks`);
-      return send(res, 200, await own(asks, method, path, query, () => bodyOf(req)));
+      if (name !== KEY_NAME) throw forbidden(`only the developer key named ${KEY_NAME}, the one pair hands out, reads the pages' links`);
+      if (method !== "GET") throw notAllowed("the pages' links are read with GET");
+      return send(res, 200, readPages(storage));
     }
     if (!(await upstream.keyValid(key))) throw unauthorized("send a developer API key AnythingLLM accepts");
     if (!METHODS.includes(method)) throw notAllowed(`the bridge passes ${METHODS.join(", ")}, not ${method}`);
