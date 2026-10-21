@@ -25,7 +25,7 @@ export function readPages(storage: string): PageLinks {
   let found: unknown = null;
   try {
     found = readJson<unknown>(path.join(storage, "anywherellm-suite", "page-links.json"), () => null);
-  } catch {} // a link or bad JSON: no links
+  } catch {} // a link, a pipe, a file too large or bad JSON: no links
   const links = found !== null && typeof found === "object" ? (found as Record<string, unknown>) : {};
   const pathOf = (kind: keyof PageLinks): string | null => {
     const value = links[kind];

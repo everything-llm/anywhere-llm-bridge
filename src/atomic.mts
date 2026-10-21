@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { forbidden } from "./errors.mts";
+import { forbidden, tooLarge } from "./errors.mts";
 
 /** Writes `data` to `file` atomically, making its folder: a reader never sees half of it. The file
  *  is a new one renamed over the old, so a link there is replaced, never followed; `mode` is set
@@ -28,26 +28,35 @@ export function writeAtomicIfChanged(file: string, text: string, mode?: number):
   return true;
 }
 
-/** Opening a link fails (ELOOP) instead of following it; Windows has no such flag. */
-const NO_FOLLOW = fs.constants.O_NOFOLLOW ?? 0;
+/** Opening a link fails (ELOOP) instead of following it, and opening a pipe doesn't wait for a
+ *  writer; Windows has neither flag. */
+const OPEN = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0);
+/** The most readJson reads; the files it reads hold a few hundred bytes. */
+const MAX_JSON = 64 * 1024;
 
-/** What the JSON file `file` holds, or `fresh()` when there's none. A file that can't be parsed is an
- *  error, never taken for an empty one: a change would write over what it held. A link is refused,
- *  a 403: whoever can write the folder (the container) could point it at any file of the host's. */
+/** What the JSON file `file` holds, or `fresh()` when there's none; a file that can't be parsed is an
+ *  error. Whoever can write the folder (the container) could put anything there, so only a plain
+ *  file of at most MAX_JSON bytes is read: a link is a 403 (it could point at any file of the
+ *  host's), and so is a pipe or a device (it could hold the read up for ever). */
 export function readJson<S>(file: string, fresh: () => S): S {
-  let text: string;
+  const name = path.basename(file);
+  let fd: number;
   try {
-    const fd = fs.openSync(file, fs.constants.O_RDONLY | NO_FOLLOW);
-    try {
-      text = fs.readFileSync(fd, "utf8");
-    } finally {
-      fs.closeSync(fd);
-    }
+    fd = fs.openSync(file, OPEN);
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
     if (code === "ENOENT") return fresh();
-    if (code === "ELOOP") throw forbidden(`${path.basename(file)} is a link; only the file itself is read`);
+    if (code === "ELOOP") throw forbidden(`${name} is a link; only the file itself is read`);
     throw e;
+  }
+  let text: string;
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) throw forbidden(`${name} isn't a plain file`);
+    if (stat.size > MAX_JSON) throw tooLarge(`${name} is over ${MAX_JSON} bytes`);
+    text = fs.readFileSync(fd, "utf8");
+  } finally {
+    fs.closeSync(fd);
   }
   return JSON.parse(text) as S;
 }

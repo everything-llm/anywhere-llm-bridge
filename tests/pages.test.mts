@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
@@ -114,6 +115,8 @@ test("a links file that isn't JSON, or not an object, gives no links and no erro
     writeLinks(text);
     assert.deepEqual(await call("GET", "/pages"), { status: 200, json: { library: null, vault: null } }, text);
   }
+  writeLinks(JSON.stringify({ library: LIBRARY, padding: "x".repeat(70_000) }));
+  assert.deepEqual((await call("GET", "/pages")).json, { library: null, vault: null }, "a file over the size read");
   assert.deepEqual(logged.filter((l) => !l.startsWith("GET /pages ")), []);
 });
 
@@ -146,4 +149,11 @@ test("a links file that is a link is not followed", { skip: process.platform ===
   fs.mkdirSync(path.dirname(linksFile()), { recursive: true });
   fs.symlinkSync(secret, linksFile());
   assert.deepEqual(await call("GET", "/pages"), { status: 200, json: { library: null, vault: null } });
+});
+
+test("a links file that is a pipe doesn't hold the bridge up", { skip: process.platform === "win32" }, async () => {
+  fs.mkdirSync(path.dirname(linksFile()), { recursive: true });
+  assert.equal(spawnSync("mkfifo", [linksFile()]).status, 0);
+  assert.deepEqual(await call("GET", "/pages"), { status: 200, json: { library: null, vault: null } });
+  assert.equal((await fetch(url + "/health")).status, 200);
 });
