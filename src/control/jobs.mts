@@ -103,9 +103,9 @@ export class Jobs {
     const name = checkedName(spec.name);
     const prompt = checkedPrompt(spec.prompt);
     const schedule = checkedSchedule(spec.schedule);
-    const tools = await this.#usable(checkedTools(spec.tools));
+    const [tools, all] = await Promise.all([this.#usable(checkedTools(spec.tools)), this.#all()]);
     const wanted: Obj = { name, prompt, schedule, tools: tools ?? [] };
-    const existing = (await this.#all()).map(shown);
+    const existing = all.map(shown);
     const twin = existing.find((j) => Object.entries(wanted).every(([k, v]) => same(j[k], v)));
     if (twin) throw new ControlError(`an identical job already exists (id ${twin.id})`);
     if (!apply) {
