@@ -55,6 +55,16 @@ test("/health needs no key and lists the routes", async () => {
   assert.deepEqual(await res.json(), { ok: true, service: "anywherellm-bridge", allow: ["GET /scheduled-jobs", "POST /scheduled-jobs/new", "/workspaces"], pages: false });
 });
 
+test("every route answers under /anywherellm-bridge too, and a path that only starts with it doesn't", async () => {
+  assert.deepEqual(await (await fetch(url + "/anywherellm-bridge/health")).json(), await (await fetch(url + "/health")).json());
+  fake.replies.set("GET /scheduled-jobs?x=1", { json: { jobs: [] } });
+  const res = await call("GET", "/anywherellm-bridge/scheduled-jobs?x=1");
+  assert.deepEqual([res.status, res.json], [200, { jobs: [] }]);
+  assert.equal((await fetch(url + "/anywherellm-bridge/scheduled-jobs")).status, 401, "the key is still needed");
+  assert.equal((await call("GET", "/anywherellm-bridgeX/scheduled-jobs")).status, 403);
+  assert.deepEqual(fake.calls.map((c) => c.url), ["/scheduled-jobs?x=1"]);
+});
+
 test("a preflight needs no key, and every answer lets any origin in", async () => {
   const pre = await fetch(url + "/scheduled-jobs", { method: "OPTIONS" });
   assert.equal(pre.status, 204);

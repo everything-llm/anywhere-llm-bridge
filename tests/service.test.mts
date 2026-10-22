@@ -191,6 +191,26 @@ test("health shows the service's state, and fails when it is not active", async 
   assert.ok(printed.includes(`FAIL ${UNIT}: failed`), printed.join("\n"));
 });
 
+test("health finds the bridge at /anywherellm-bridge on AnythingLLM's address, and names the fix when that is AnythingLLM's page", async () => {
+  await install(ctxWith(systemctl().run), opts());
+  const here = `http://127.0.0.1:${port}`;
+  printed.length = 0;
+  await health(ctxWith(systemctl().run, "linux", { PUBLIC_URL: here, ANYTHINGLLM_PUBLIC_URL: here }));
+  assert.ok(printed.includes(`ok   ${here}/anywherellm-bridge/health`), printed.join("\n"));
+
+  const page = http.createServer((_, res) => res.writeHead(200, { "Content-Type": "text/html" }).end("<!doctype html>"));
+  const other = `http://127.0.0.1:${await listen(page)}`;
+  try {
+    printed.length = 0;
+    const env = { PUBLIC_HOST: "gir.tail1234.ts.net", PUBLIC_URL: here, ANYTHINGLLM_PUBLIC_URL: other };
+    assert.equal(await health(ctxWith(systemctl().run, "linux", env)), false);
+    const line = printed.find((l) => l.startsWith(`FAIL ${other}/anywherellm-bridge/health`)) ?? printed.join("\n");
+    assert.ok(line.includes(`tailscale serve --bg --https=${new URL(other).port} --set-path /anywherellm-bridge http://127.0.0.1:${port}`), line);
+  } finally {
+    await close(page);
+  }
+});
+
 // --- launchd
 
 const plist = () => path.posix.join(home, "Library", "LaunchAgents", "local.anywherellm-bridge.plist");

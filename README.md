@@ -18,7 +18,7 @@ flowchart LR
 
 ## The bridge
 
-It listens on `BRIDGE_PORT` (8467), on 127.0.0.1.
+It listens on `BRIDGE_PORT` (8467), on 127.0.0.1. Every route below also answers under `/anywherellm-bridge` (see Reach it from your devices).
 
 - `GET /health` needs no key: `{"ok": true, "service": "anywherellm-bridge", "allow": [...], "pages": true}`. `pages` is false when the bridge doesn't know AnythingLLM's storage.
 - Any other request needs `Authorization: Bearer <developer key>`, which AnythingLLM must accept. Any origin may call it, and a preflight needs no key.
@@ -96,7 +96,7 @@ The settings file is `bridge.env` in the user's settings folder (`~/.config/anyw
 
 1. To pass other routes, change `BRIDGE_ALLOW` in the settings file and run `install` again (it restarts the service).
 
-1. Run `node anywherellm-bridge.cjs health`. It checks the service, the bridge, AnythingLLM, the bridge's login, that `BRIDGE_ALLOW` isn't empty, and the public route.
+1. Run `node anywherellm-bridge.cjs health`. It checks the service, the bridge, AnythingLLM, the bridge's login, that `BRIDGE_ALLOW` isn't empty, the public route, and the bridge at `/anywherellm-bridge` on AnythingLLM's public address (naming the command that puts it there when it isn't).
 
 1. To connect a phone, give AnythingLLM and the bridge addresses your devices reach (next section), then run `node anywherellm-bridge.cjs pair`. It prints a link, `anywherellm://connect?...`, that AnywhereLLM Lite opens. The link holds `url` (AnythingLLM's address), `key` (the developer key named `AnywhereLLM`, made the first time), and `toolkit` and `apps` (the bridge's and anythingllm-apps-v2's addresses, when known; the app still reads the first as `toolkit`). In a terminal it also draws the link as a QR code, for Lite's Settings > Connection > Scan QR code (`npm run pair` from the repository does the same); piped, it prints the link alone. Each address must be https, or plain http to a private host.
 
@@ -104,18 +104,27 @@ The settings file is `bridge.env` in the user's settings folder (`~/.config/anyw
 
 ## Reach it from your devices
 
-A phone needs two addresses: AnythingLLM's (`127.0.0.1:3001`) and the bridge's (`127.0.0.1:8467`). Any tool that gives each an address works. Set the addresses it gives, then run `pair` again.
+A phone needs AnythingLLM's address (`127.0.0.1:3001`) and the bridge's (`127.0.0.1:8467`). Any tool that gives each an address works. Set the addresses it gives, then run `pair` again.
+
+**The bridge on AnythingLLM's address.** Serve the bridge at the path `/anywherellm-bridge` of AnythingLLM's public address too, and AnywhereLLM Lite finds it there with no pairing link: it asks `<AnythingLLM's address>/anywherellm-bridge/health`, on exactly the scheme, host and port the phone saved. The bridge answers whether or not the proxy strips the path. `health` checks it. The snippets below put it there.
 
 **Tailscale.** `tailscale serve` gives each port an https address on this machine's tailnet name; set `PUBLIC_HOST` to it and both addresses follow:
 
 ```sh
 tailscale serve --bg --https=3001 http://127.0.0.1:3001
+tailscale serve --bg --https=3001 --set-path /anywherellm-bridge http://127.0.0.1:8467   # Lite finds it here
 tailscale serve --bg --https=8467 http://127.0.0.1:8467
 ```
 
 On Linux these need sudo unless you ran `tailscale set --operator=$USER` once.
 
 **A tunnel or a reverse proxy.** Give each service a hostname of its own, then set `ANYTHINGLLM_PUBLIC_URL=https://ai.example.com` and `PUBLIC_URL=https://bridge.example.com`. With Cloudflare Tunnel, Access must not front these hostnames (the phone sends a developer key, not a browser login), a stream that sends nothing for about 100 s is closed, and a quick tunnel's hostname changes on each start, so pair again. With Caddy, `reverse_proxy 127.0.0.1:3001` and `reverse_proxy 127.0.0.1:8467` in a site block each.
+
+To have Lite find the bridge on AnythingLLM's hostname as well, route the path there before AnythingLLM's own rule:
+
+- Caddy, in AnythingLLM's site block: `handle /anywherellm-bridge* { reverse_proxy 127.0.0.1:8467 }`
+- nginx, in AnythingLLM's server block: `location /anywherellm-bridge/ { proxy_pass http://127.0.0.1:8467; }`
+- Cloudflare Tunnel, an ingress rule above AnythingLLM's: `- hostname: ai.example.com`, `path: ^/anywherellm-bridge(/|$)`, `service: http://127.0.0.1:8467`
 
 **A home network without TLS.** Plain http works when the host is private: `localhost`, a name with no dot such as `nas`, a name ending in `.local`, `.lan`, `.home.arpa` or `.ts.net`, or a loopback, private, link-local or Tailscale address. The key then travels unencrypted on that network. The settings and `pair` refuse plain http to any other host.
 

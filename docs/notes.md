@@ -75,3 +75,10 @@ The bridge's decisions and their reasons. The entries up to 2026-10-15 were writ
 ## The pairing link's QR code, 2026-10-22
 
 - **`pair` draws the link as a QR code** when its output is a terminal, so a phone pairs from Lite's Scan QR code without a QR generator; piped, it prints the link alone, as before. The encoder is `qrcode-generator` (MIT, no dependencies), bundled, so the one file still needs nothing beside it. Each line is set in explicit white on black, so it scans on a dark theme too. Checked once by decoding a drawn code with zxing-cpp.
+
+## The bridge on AnythingLLM's address, 2026-10-22
+
+- **Why:** AnywhereLLM Lite learned the bridge's address only from a pairing link, and a connection saved by hand forgot it, so the phone lost Library, Vault and Upcoming with nothing to say why. Lite (c9ff180) now also asks `<AnythingLLM's address>/anywherellm-bridge/health`, on the same scheme, host and port only, and uses that prefix when it answers as the bridge.
+- **The bridge strips the prefix itself** (`PREFIX` in `server.mts`), once, before any route is chosen: not every proxy strips it (a Cloudflare Tunnel path rule doesn't), and nothing further in needs a special case.
+- **Install doesn't run `tailscale serve`:** that changes the machine's tailnet setup, needs sudo or the operator setting, and suits only one of the ways in. `health` checks the path instead (AnythingLLM's own page answering there is a fail) and names the command. `pair` and the :8467 address stay.
+

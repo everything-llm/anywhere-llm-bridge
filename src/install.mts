@@ -19,6 +19,7 @@ import * as control from "./control/install.mts";
 import { DEFAULT_ROLES, parseRoles } from "./control/settings.mts";
 import { desktopStorage, expandHome, INNER_STORAGE, samePath, type Place } from "./paths.mts";
 import { choose, foreground, managerOf, parseKind, run, type Host, type Manager, type Run } from "./service/index.mts";
+import { PREFIX, SERVICE } from "./server.mts";
 import { fileFor, loadSettings, shown, type Settings } from "./settings.mts";
 import { request, Upstream } from "./upstream.mts";
 
@@ -72,13 +73,8 @@ function storageFor(ctx: Ctx, asked: string | undefined): string {
   return where;
 }
 
-const statusOf = async (url: string): Promise<number> => {
-  try {
-    return (await request(url, { timeout: 5_000 })).status;
-  } catch {
-    return 0;
-  }
-};
+const replyOf = (url: string) => request(url, { timeout: 5_000 }).catch(() => null);
+const statusOf = async (url: string): Promise<number> => (await replyOf(url))?.status ?? 0;
 
 async function waitFor(url: string, seconds = 60): Promise<boolean> {
   for (const deadline = Date.now() + seconds * 1000; Date.now() < deadline; await sleep(500)) {
@@ -146,7 +142,7 @@ function leftForYou(ctx: Ctx, settings: Settings, file: string, withControl: boo
     ctx.print(`- AnythingLLM's .env isn't at ${settings.envFile}: set ANYTHINGLLM_ENV in ${file} (its password is the bridge's login; none is needed for Desktop).`);
   }
   if (!settings.allow.length) ctx.print(`- BRIDGE_ALLOW is empty, so the bridge passes nothing: set it in ${file}.`);
-  ctx.print("- For AnywhereLLM Lite: give the bridge an https address (README: Reach it from your devices).");
+  ctx.print(`- For AnywhereLLM Lite: give the bridge an https address, and serve it at ${PREFIX} on AnythingLLM's own, where Lite finds it without pairing (README: Reach it from your devices).`);
 }
 
 export function uninstall(ctx: Ctx): void {
@@ -178,16 +174,31 @@ export async function health(ctx: Ctx): Promise<boolean> {
     ctx.print(`AnythingLLM isn't answering yet: waiting up to ${upWait} s for it to start`);
     if (await waitFor(pingUrl, upWait)) ping = 200;
   }
-  const [bridge, login, route] = await Promise.all([
+  const [bridge, login, route, beside] = await Promise.all([
     statusOf(`http://127.0.0.1:${settings.port}/health`),
     loginCheck(settings),
     settings.publicUrl ? statusOf(`${settings.publicUrl}/health`).then((status) => probe(`${settings.publicUrl}/health`, status)) : (["route", true, "PUBLIC_URL and PUBLIC_HOST unset: the bridge answers on this machine only"] as Check),
+    besideCheck(settings),
   ]);
   if (settings.storage && control.installed(settings.storage)) found.push(...control.checks(settings.storage, ctx.controlSource));
   found.push(probe(`bridge on :${settings.port}`, bridge), probe("AnythingLLM", ping, `${settings.anythingllmUrl}: `, `no answer in ${upWait} s`), login);
-  found.push(["BRIDGE_ALLOW", settings.allow.length > 0, shown(settings).BRIDGE_ALLOW || "empty: the bridge passes nothing"], route);
+  found.push(["BRIDGE_ALLOW", settings.allow.length > 0, shown(settings).BRIDGE_ALLOW || "empty: the bridge passes nothing"], route, beside);
   for (const [what, ok, detail] of found) ctx.print(`${ok ? "ok  " : "FAIL"} ${what}${detail ? `: ${detail}` : ""}`);
   return found.every(([, ok]) => ok);
+}
+
+/** The bridge at PREFIX on AnythingLLM's public address, where AnywhereLLM Lite looks for it when no
+ *  pairing link named it; AnythingLLM's own page answering there is a fail. */
+async function besideCheck(settings: Settings): Promise<Check> {
+  if (!settings.anythingllmPublicUrl) return [`the bridge at ${PREFIX}`, true, "ANYTHINGLLM_PUBLIC_URL and PUBLIC_HOST unset"];
+  const url = `${settings.anythingllmPublicUrl}${PREFIX}/health`;
+  const json = (await replyOf(url))?.json as { service?: unknown } | null | undefined;
+  if (json?.service === SERVICE) return [url, true, ""];
+  const port = new URL(settings.anythingllmPublicUrl).port || "443";
+  const fix = settings.publicHost
+    ? `tailscale serve --bg --https=${port} --set-path ${PREFIX} http://127.0.0.1:${settings.port}`
+    : "README: Reach it from your devices";
+  return [url, false, `not the bridge, so Lite finds it only through a pairing link; to serve it there: ${fix}`];
 }
 
 async function loginCheck(settings: Settings): Promise<Check> {

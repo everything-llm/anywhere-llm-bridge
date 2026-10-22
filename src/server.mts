@@ -12,6 +12,7 @@
 // call them, and a preflight needs no key. The bridge's own failures are `{"error": "..."}`: 400 a
 // bad request, 401 no accepted key, 403 a route not allowed, 405 another method, 413 a body too
 // large, 502 AnythingLLM can't be reached or refused the bridge's login.
+// Each route also answers under PREFIX, for the bridge on AnythingLLM's own address (README).
 
 import http from "node:http";
 import { METHODS, route, show, type Rule } from "./allow.mts";
@@ -20,7 +21,9 @@ import { KEY_NAME } from "./pair.mts";
 import { readPages } from "./pages.mts";
 import type { Upstream } from "./upstream.mts";
 
-const SERVICE = "anywherellm-bridge";
+export const SERVICE = "anywherellm-bridge";
+/** The path the bridge sits under on AnythingLLM's own address. */
+export const PREFIX = `/${SERVICE}`;
 const BRIDGE_TIMEOUT = 120_000; // a route may wait on a provider or an MCP server (AnythingLLM's 30 s)
 const MAX_BODY = 8 * 1024 * 1024;
 
@@ -75,7 +78,8 @@ export function createServer({ rules, upstream, storage = null, log }: Deps): ht
     const method = req.method ?? "GET";
     const url = req.url ?? "/";
     const cut = url.indexOf("?");
-    const rawPath = cut < 0 ? url : url.slice(0, cut);
+    let rawPath = cut < 0 ? url : url.slice(0, cut);
+    if (rawPath === PREFIX || rawPath.startsWith(PREFIX + "/")) rawPath = rawPath.slice(PREFIX.length) || "/";
     const query = cut < 0 ? "" : url.slice(cut + 1);
     if (method === "OPTIONS") return send(res, 204, null);
     if (method === "GET" && rawPath === "/health") return send(res, 200, { ok: true, service: SERVICE, allow, pages: storage !== null });
