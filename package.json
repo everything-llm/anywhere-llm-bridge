@@ -7,12 +7,14 @@
   },
   "scripts": {
     "build": "node build.mjs",
+    "pair": "node dist/anywherellm-bridge.cjs pair",
     "typecheck": "tsc -p .",
     "test": "node build.mjs && node --test --test-timeout=120000 \"tests/*.test.mts\""
   },
   "devDependencies": {
     "@types/node": "^20.19.0",
     "esbuild": "^0.28.2",
+    "qrcode-generator": "^2.0.4",
     "typescript": "^7.0.2"
   }
 }

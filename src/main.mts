@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // anywherellm-bridge: `install`, `uninstall` and `health` set up the bridge as a service
-// (install.mts); `serve` runs it; `pair` prints the link a phone connects with; `settings` prints
+// (install.mts); `serve` runs it; `pair` prints the link a phone connects with (and its QR code in a
+// terminal); `settings` prints
 // the settings in use.
 
 import fs from "node:fs";
@@ -13,6 +14,7 @@ import { defaultList } from "./allow.mts";
 import type { Runtime } from "./control/install.mts";
 import { health, install, uninstall, type Ctx } from "./install.mts";
 import { developerKey, pairingLink } from "./pair.mts";
+import { terminalQr } from "./qr.mts";
 import { createServer } from "./server.mts";
 import { fileFor, loadSettings, shown } from "./settings.mts";
 
@@ -27,7 +29,8 @@ const USAGE = `usage: anywherellm-bridge <command>
   health                         check it all; exit 1 when a check fails
   serve                          run the bridge
   pair [--url U] [--bridge U] [--apps U]
-                                 print the link AnywhereLLM Lite connects with (it holds the key)
+                                 print the link AnywhereLLM Lite connects with (it holds the key),
+                                 and in a terminal its QR code
   settings                       print the settings in use
 
 The storage is AnythingLLM Desktop's when there is one; for Docker, the folder mounted at
@@ -85,8 +88,13 @@ async function main(argv: string[]): Promise<number | void> {
       const address = text("url") || settings.anythingllmPublicUrl;
       if (!address) throw invalid("no address for AnythingLLM: set ANYTHINGLLM_PUBLIC_URL or PUBLIC_HOST in the settings, or pass --url");
       const key = await developerKey(Upstream.of(settings));
+      const link = pairingLink(address, key, text("bridge") || settings.publicUrl, text("apps") || settings.appsUrl);
       console.error(`Open this in AnywhereLLM Lite to connect to ${address}. It holds the key:`);
-      console.log(pairingLink(address, key, text("bridge") || settings.publicUrl, text("apps") || settings.appsUrl));
+      console.log(link);
+      if (process.stdout.isTTY) {
+        console.error("\nOr scan it in Lite, Settings > Connection > Scan QR code:");
+        console.log(terminalQr(link));
+      }
       return 0;
     }
     case "settings":
