@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 // anywherellm-bridge: `install`, `uninstall` and `health` set up the bridge as a service
 // (install.mts); `serve` runs it; `pair` prints the link a phone connects with (and its QR code in a
-// terminal); `settings` prints
-// the settings in use.
+// terminal); `settings` prints the settings in use.
 
 import fs from "node:fs";
 import os from "node:os";

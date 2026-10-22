@@ -74,4 +74,4 @@ The bridge's decisions and their reasons. The entries up to 2026-10-15 were writ
 
 ## The pairing link's QR code, 2026-10-22
 
-- **`pair` draws the link as a QR code** when its output is a terminal (`src/qr.mts`), so a phone pairs from Lite's Scan QR code without a QR generator; piped, it prints the link alone, as before. The encoder is `qrcode-generator` (MIT, no dependencies), bundled by esbuild, so the one file still needs nothing beside it. Two modules per character, upper half blocks in explicit black and white, so it scans on a dark theme too; error correction M, a light border of 4. Checked once by decoding the drawn modules with zxing-cpp; `tests/qr.test.mts` checks the modules against the encoder's own.
+- **`pair` draws the link as a QR code** when its output is a terminal, so a phone pairs from Lite's Scan QR code without a QR generator; piped, it prints the link alone, as before. The encoder is `qrcode-generator` (MIT, no dependencies), bundled, so the one file still needs nothing beside it. Each line is set in explicit white on black, so it scans on a dark theme too. Checked once by decoding a drawn code with zxing-cpp.

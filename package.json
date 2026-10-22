@@ -7,7 +7,7 @@
   },
   "scripts": {
     "build": "node build.mjs",
-    "pair": "node dist/anywherellm-bridge.cjs pair",
+    "pair": "node build.mjs && node dist/anywherellm-bridge.cjs pair",
     "typecheck": "tsc -p .",
     "test": "node build.mjs && node --test --test-timeout=120000 \"tests/*.test.mts\""
   },
