@@ -58,6 +58,9 @@ const ctxWith = (run: Run, platform: NodeJS.Platform = "linux", env: Record<stri
   run,
   uid: 501,
   startWait: 1,
+  // No AnythingLLM answers on a runner, as one may on :3001 where the tests are written: health waits
+  // a second for it, not 30 for each of its tests, which ran the file past its time.
+  upWait: 1,
 });
 const opts = (more: Partial<Options> = {}): Options => ({ storage, start: true, ...more });
 const host = (run: Run, platform: NodeJS.Platform): Host => ({ platform, env: {}, home, run, uid: 501 });

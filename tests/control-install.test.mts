@@ -155,6 +155,7 @@ function machine() {
     platform: "linux",
     run: () => ({ status: 1, stdout: "" }),
     controlSource: SOURCE,
+    upWait: 1, // no AnythingLLM answers on a runner: health waits a second for it, not 30
   };
   return { ctx, dir, printed };
 }
